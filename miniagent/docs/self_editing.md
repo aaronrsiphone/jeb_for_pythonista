@@ -44,11 +44,11 @@ Start with the entry point and follow the call graph:
 | 7 | `permissions.py` | How authorization decisions are made and stored. |
 | 8 | `provider.py` | How HTTP requests are built and sent. |
 | 9 | `config.py` | How settings are loaded, saved, and migrated. |
-| 10 | `old_jeb.py` | The original single-file ancestor. Read only for context. |
+| 10 | `../jeb_bootstrap.py` (repository root) | The original single-file ancestor. Read only for context. |
 
 Use `list_files` with `recursive=true` to see the full tree, and
 `read_file` with `start_line` / `end_line` for large files like
-`old_jeb.py`.
+`jeb_bootstrap.py`.
 
 ## 2. The golden rules of editing this harness
 
@@ -234,8 +234,9 @@ exercises the import graph. Clean it up or leave it — your call.
   `workspace.py:resolve()`.
 - **Do not** start a nested `run()` call inside the running agent. You will
   hijack the console loop.
-- **Do not** overwrite `old_jeb.py` as a way to change behavior — it is a
-  historical artifact and is not imported. Change the live modules instead.
+- **Do not** overwrite `jeb_bootstrap.py` (repository root) as a way to
+  change behavior — it is a historical artifact and is not imported. Change
+  the live modules instead.
 
 ## 7. After you finish
 

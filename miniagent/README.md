@@ -31,12 +31,14 @@ that guide.
 
 | Step | What it was |
 |------|-------------|
-| 1 | `old_jeb.py` — a single ~2,150-line file containing everything: provider, agent loop, tools, permissions, runner, workspace, and the console. |
+| 1 | [`jeb_bootstrap.py`](../jeb_bootstrap.py) — a single ~2,150-line file containing everything: provider, agent loop, tools, permissions, runner, workspace, and the console. Lives at the repository root. |
 | 2 | This multifile package — the same functionality split into focused modules with clean import boundaries. |
 | 3 | This documentation — a guide so a coding agent can understand and self-edit the harness. |
 
-The original single-file `old_jeb.py` is kept in the repository for reference
-and migration. It is not imported by the package.
+The original single-file bootstrap (`jeb_bootstrap.py`, at the repository
+root) is kept for reference and migration. It is not imported by this
+package. See the [repository README](../README.md) for how a fresh
+bootstrapping run is meant to produce something like this package.
 
 ## Quick start
 
@@ -163,7 +165,6 @@ All paths below are relative to the package root (`miniagent/`).
 | `tools.py` | Tool schemas, dispatch, and permission gating |
 | `runner.py` | In-process Python execution with termination blocking |
 | `workspace.py` | Workspace confinement and low-level file operations |
-| `old_jeb.py` | Original single-file version (reference only, not imported) |
 | `template_JEB.md` | Template for the global standing instructions (copy to `~/miniagent/JEB.md`) |
 | `INSTALL.md` | Installation instructions |
 | `README.md` | This file |
