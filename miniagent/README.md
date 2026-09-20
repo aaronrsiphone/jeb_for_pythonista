@@ -29,16 +29,9 @@ that guide.
 
 ## Project history
 
-| Step | What it was |
-|------|-------------|
-| 1 | [`jeb_bootstrap.py`](../jeb_bootstrap.py) — a single ~2,150-line file containing everything: provider, agent loop, tools, permissions, runner, workspace, and the console. Lives at the repository root. |
-| 2 | This multifile package — the same functionality split into focused modules with clean import boundaries. |
-| 3 | This documentation — a guide so a coding agent can understand and self-edit the harness. |
-
-The original single-file bootstrap (`jeb_bootstrap.py`, at the repository
-root) is kept for reference and migration. It is not imported by this
-package. See the [repository README](../README.md) for how a fresh
-bootstrapping run is meant to produce something like this package.
+This package is organized as focused modules with clean import boundaries,
+plus documentation so a coding agent can understand and self-edit the
+harness.
 
 ## Quick start
 

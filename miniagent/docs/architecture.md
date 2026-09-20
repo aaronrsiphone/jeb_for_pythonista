@@ -157,9 +157,8 @@ Setting `model` auto-appends it to the provider's `models` list; setting
 stored here.
 
 `first_run_setup()` either silently migrates a legacy `miniagent_config.json`
-/ `miniagent_config.py` from the project root (the old `jeb_bootstrap.py`
-scheme) or prompts interactively for provider name, base URL, models, chat
-path, and auth.
+/ `miniagent_config.py` from the project root or prompts interactively for
+provider name, base URL, models, chat path, and auth.
 
 `default_state_dir()` picks `~/Documents/miniagent`, then `~/.miniagent`,
 then a temp dir — never hard-coding an iOS container UUID.
@@ -255,12 +254,3 @@ modules from `sys.modules` afterward so re-runs pick up file changes. The
 console-critical builtins `input` and `print` are also saved and restored
 around each run, so a script that rebinds them cannot poison the interactive
 console loop after the run ends.
-
-## The legacy single file (`jeb_bootstrap.py`)
-
-The original `jeb_bootstrap.py` (kept at the repository root for reference)
-contained all of the above in one ~2,150-line file. The multifile package is
-a faithful refactor: the system prompt, the permission prompt choices, the
-keychain service scheme, the termination block list, the console commands,
-and the first-run migration logic all match the original. `jeb_bootstrap.py`
-is not imported by the package and exists only as history.
