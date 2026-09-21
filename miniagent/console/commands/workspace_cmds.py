@@ -29,7 +29,7 @@ def workspace_command(ctx, arg):
 
 @command("context")
 def context_command(ctx, arg):
-    """Show JEB.md files discovered (global + local) and the combined
+    """Show JEB.md files discovered (global + package + local) and the combined
     context that was added to the system prompt.
     """
     _print_jeb_context(ctx.root)
@@ -51,13 +51,19 @@ def _print_jeb_context(root: Path):
         print(f"Global  : {path} ({status})")
         found = found or path.exists()
 
+    if jebmd.is_self_edit(root):
+        package_path = jebmd.package_jeb_md_path()
+        status = "found" if package_path.exists() else "missing"
+        print(f"Package : {package_path} ({status}, self-editing)")
+        found = found or package_path.exists()
+
     local_path = Path(root).resolve() / jebmd.JEB_MD_NAME
     status = "found" if local_path.exists() else "missing"
     print(f"Local   : {local_path} ({status})")
     found = found or local_path.exists()
 
     if not found:
-        print("No JEB.md files found (global or local).")
+        print("No JEB.md files found (global, package or local).")
         return
 
     _text, _header, conflicts = jebmd._load_global_jeb_md()

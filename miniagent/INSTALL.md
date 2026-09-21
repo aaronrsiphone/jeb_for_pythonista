@@ -36,20 +36,71 @@ site-packages/
     miniagent/
         __init__.py
         app.py
+        context.py
         agent.py
+        events.py
+        checkpoints.py
+        jebmd.py
+        keys.py
         config.py
         permissions.py
         provider.py
         runner.py
         sessions.py
-        tools.py
         vision.py
         workspace.py
+        knowledge.py
+        gendocs.py
+        _jeb.py
+        JEB.md
+        template_JEB.md
+        tools/
+            __init__.py
+            registry.py
+            dispatch.py
+            list_files.py
+            read_file.py
+            search_files.py
+            create_file.py
+            edit_file.py
+            multi_edit.py
+            overwrite_file.py
+            clean_up.py
+            run_python.py
+            ask_image.py
+            knowledge.py
+        console/
+            __init__.py
+            loop.py
+            registry.py
+            resume.py
+            commands/
+                __init__.py
+                help_cmds.py
+                config_cmds.py
+                perms_cmds.py
+                session_cmds.py
+                workspace_cmds.py
+        ui/
+            __init__.py
+            console.py
+            verbose.py
+            headless.py
         tests/
             __init__.py
             run_all.py
             test_*.py
+        docs/
+            architecture.md
+            self_editing.md
+            testing.md
+            jeb_md.md
+            reference.md
+            rearchitecture.md
 ```
+
+Copy the whole tree — every subpackage (`tools/`, `console/`, `console/commands/`,
+`ui/`) needs its own `__init__.py` to import correctly.
 
 You can do this with Pythonista's own file browser (drag the `miniagent`
 folder into **Python Modules**), or with the Files app.
@@ -118,11 +169,13 @@ projects, in an application-state directory derived at runtime.  It prefers:
     config.json
     permissions.json
     sessions/
+    checkpoints/
 ```
 
 falling back to `~/.miniagent/` and then a temp directory.  `sessions/`
 holds the recorded conversation logs (`:resume`) for every workspace, one
-JSONL file per session.  The API key is
+JSONL file per session.  `checkpoints/` holds the per-turn file snapshots
+`:undo` restores from, also one directory per workspace.  The API key is
 stored in the Pythonista keychain, never in a JSON file.  You can set it from
 the MiniAgent console with:
 

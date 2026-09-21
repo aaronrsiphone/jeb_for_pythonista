@@ -256,10 +256,37 @@ def _load_global_jeb_md():
     return text, header, conflicts
 
 
+def package_jeb_md_path() -> Path:
+    """Return the path of the running package's own ``JEB.md``."""
+    return Path(__file__).resolve().parent / JEB_MD_NAME
+
+
+def is_self_edit(project_root) -> bool:
+    """Return True when the running package lives inside *project_root*.
+
+    This is the self-editing case: the workspace the agent has been pointed
+    at contains the very package that is running it — which is what happens
+    when the workspace is Pythonista's ``site-packages`` and ``miniagent/``
+    sits inside it.  Detecting it is what lets the package's own standing
+    instructions reach the agent (see :func:`load_jeb_md_context`); without
+    the check, a shipped ``miniagent/JEB.md`` would only ever be found when
+    the workspace happened to be the package directory itself.
+    """
+    package_dir = package_jeb_md_path().parent
+    root = Path(project_root).resolve()
+    if package_dir == root:
+        return False  # the ordinary local lookup already covers this
+    try:
+        package_dir.relative_to(root)
+    except ValueError:
+        return False
+    return True
+
+
 def load_jeb_md_context(project_root: Path) -> str:
     """Discover and concatenate ``JEB.md`` context for *project_root*.
 
-    Three locations are checked, in order:
+    Four locations are checked, in order:
 
     1. **Global, Documents version** — a ``JEB.md`` in
        ``~/Documents/miniagent/``.  Its content is included first.
@@ -268,8 +295,16 @@ def load_jeb_md_context(project_root: Path) -> str:
        conflicts resolved in favour of the Documents version
        (``_merge_global_jeb_md_texts``); otherwise whichever file exists
        is used on its own.
-    3. **Local** — a ``JEB.md`` in the project workspace root.  Its content
-       is included after the global content.
+    3. **Package** — the running package's own ``JEB.md``, included only
+       when the package lives *inside* the workspace (:func:`is_self_edit`),
+       i.e. the agent has been pointed at a directory containing the harness
+       that is running it.  These are the self-editing rules, and this is
+       what gets them into the system prompt automatically instead of
+       relying on the agent thinking to read ``docs/self_editing.md``.
+       Skipped when the workspace *is* the package directory, because the
+       local lookup below already finds the same file.
+    4. **Local** — a ``JEB.md`` in the project workspace root.  Most
+       specific, so it comes last.
 
     Any of them may be absent.  The sections are separated by a labelled
     divider so the model can tell them apart.  An empty string is returned
@@ -280,6 +315,14 @@ def load_jeb_md_context(project_root: Path) -> str:
     global_text, global_header, _conflicts = _load_global_jeb_md()
     if global_text:
         parts.append(global_header + "\n\n" + global_text)
+
+    if is_self_edit(project_root):
+        package_text = _read_jeb_md(package_jeb_md_path())
+        if package_text:
+            parts.append(
+                "# Package JEB.md (self-editing: the harness is inside this "
+                "workspace)\n\n" + package_text
+            )
 
     local_path = Path(project_root).resolve() / JEB_MD_NAME
     local_text = _read_jeb_md(local_path)

@@ -247,6 +247,34 @@ more text
     check("second candidate is the legacy version",
           paths[1].parts[-2:], ("miniagent", "JEB.md"))
 
+    # --- self-edit discovery of the package's own JEB.md -----------------------
+    #
+    # The package ships miniagent/JEB.md so an agent pointed at a workspace
+    # containing the harness gets the self-editing rules in its system prompt
+    # automatically.  That only works if discovery notices the package is
+    # inside the workspace: the local lookup alone checks project_root/JEB.md,
+    # which in the real deployment (workspace = site-packages, miniagent/ a
+    # subdirectory of it) is a sibling of the package, not the shipped file.
+
+    package_dir = jebmd.package_jeb_md_path().parent
+    outer = str(package_dir.parent)
+
+    check("package dir containing the harness is self-edit",
+          jebmd.is_self_edit(outer), True)
+    check("the package dir itself is not self-edit (local lookup covers it)",
+          jebmd.is_self_edit(str(package_dir)), False)
+
+    unrelated = tempfile.mkdtemp()
+    tmp_roots.append(unrelated)
+    check("an unrelated workspace is not self-edit",
+          jebmd.is_self_edit(unrelated), False)
+    check("an unrelated workspace gets no package rules",
+          "Package JEB.md" in jebmd.load_jeb_md_context(unrelated), False)
+
+    if jebmd.package_jeb_md_path().exists():
+        check("package rules reach the context when self-editing",
+              "Package JEB.md" in jebmd.load_jeb_md_context(outer), True)
+
 finally:
     for root in tmp_roots:
         shutil.rmtree(root, ignore_errors=True)
