@@ -94,6 +94,20 @@ if __name__ == "__main__":
 Running `jeb.py` starts an interactive MiniAgent console scoped to
 `SomeProject/`.
 
+Alternatively, copy `miniagent/_jeb.py` from the installed package to
+`jeb.py` in your project instead of typing it out:
+
+```
+cp <site-packages>/miniagent/_jeb.py <project>/jeb.py
+```
+
+(replace `<site-packages>` with the directory from step 1, and `<project>`
+with your project directory). This is the exact same snippet shown above,
+saved as a template inside the package so you don't have to retype it —
+handy if you're scripting the setup. If you installed via the Files app or
+Pythonista's own file browser, hand-typing the snippet above (or copying it
+with the file browser) may be more convenient than a shell `cp`.
+
 ## Where MiniAgent stores its own state
 
 MiniAgent keeps its configuration and permission policy **outside** your

@@ -2,27 +2,32 @@
 
 Two read-only resources behind one tool:
 
-- The **knowledge base** — a small, user-maintained library shipped inside
-  the package (``miniagent/knowledge/``): environment maps as markdown plus
-  maintenance scripts the *user* runs by hand (``probe.py`` records fresh
-  runtime facts; ``lookup_docs.py`` is the standalone ancestor of the docs
-  action below).  Because it lives inside the package, every project's agent
+- The **knowledge base** — an *optional, user-populated* directory at
+  ``miniagent/knowledge/``, next to this module.  Nothing ships there by
+  default: it is a place for the user (or an agent, on their behalf) to
+  drop their own reference markdown — environment notes, API cheat sheets,
+  whatever is useful to have on hand across projects.  Because it lives
+  inside the package rather than a project workspace, every project's agent
   can read it through the tool, while the file tools of unrelated project
-  workspaces cannot touch it.
+  workspaces cannot touch it.  When the directory does not exist,
+  ``available`` is ``False`` and the ``list``/``read``/``search`` actions
+  raise a clear "Knowledge base not available" error instead of silently
+  returning nothing.
 - **Pythonista's bundled official documentation** — ``Documentation.inv``
   (a TSV symbol index: name, kind, doc path) and ``Documentation.zip``
-  (the HTML pages) inside the app bundle.  :class:`PythonDocs` is a port of
-  ``lookup_docs.py`` that searches them offline, so the agent consults the
-  canonical docs — not the stale online copies — without network access and
-  without executing anything.
+  (the HTML pages) inside the app bundle.  :class:`PythonDocs` searches
+  them offline, so the agent consults the canonical docs — not the stale
+  online copies — without network access and without executing anything.
+  This is independent of the ``knowledge/`` directory above and works
+  regardless of whether it exists.
 
 The ``knowledge`` tool in ``tools.py`` exposes both.  ``list`` / ``read`` /
-``search`` operate on the knowledge files through a
-:class:`~miniagent.workspace.Workspace` rooted at the knowledge directory,
-so they get exactly the confinement, formatting, and limits of the project
-file tools: a knowledge path can never escape the knowledge root.  ``docs``
-searches the bundled documentation.  ``docs`` does not touch the knowledge
-directory, so it works even when that directory is missing.
+``search`` operate on the knowledge directory's files through a
+:class:`~miniagent.workspace.Workspace` rooted there, so — when the
+directory is present — they get exactly the confinement, formatting, and
+limits of the project file tools: a knowledge path can never escape the
+knowledge root. ``docs`` searches the bundled documentation and does not
+touch the knowledge directory at all.
 
 Everything is strictly read-only: no action writes a file and no action
 executes code, which is why the tool needs no permission gating at all.
@@ -75,14 +80,16 @@ def _strip_tags(html: str) -> str:
 
 
 class Knowledge:
-    """Read-only access to the knowledge base and the bundled docs.
+    """Read-only access to the (optional) knowledge base and the bundled docs.
 
-    When *root* is omitted, the knowledge directory shipped inside the
-    package is used.  When it does not exist (or an explicit *root* is not a
-    directory), the instance is *unavailable*: ``available`` is False and the
-    file operations raise :class:`KnowledgeError` with the location that was
-    tried.  Construction never raises.  The ``docs`` method is independent of
-    the knowledge directory and works regardless.
+    When *root* is omitted, the knowledge directory next to the package's
+    own modules (``miniagent/knowledge/``) is used.  Nothing ships there by
+    default; it exists only if the user (or an agent) has populated it.
+    When it does not exist (or an explicit *root* is not a directory), the
+    instance is *unavailable*: ``available`` is False and the file
+    operations raise :class:`KnowledgeError` with the location that was
+    tried.  Construction never raises.  The ``docs`` method is independent
+    of the knowledge directory and works regardless.
     """
 
     def __init__(self, root=None):
@@ -108,8 +115,9 @@ class Knowledge:
         if self.workspace is None:
             raise KnowledgeError(
                 f"Knowledge base not available at {self.requested_root}. "
-                "The miniagent package ships its knowledge/ directory next "
-                "to its modules."
+                "This is an optional, user-populated directory — create "
+                "it and add your own reference markdown to use 'list', "
+                "'read', or 'search'."
             )
         return self.workspace
 

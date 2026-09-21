@@ -18,7 +18,7 @@ from .config import Config, default_state_dir
 from .permissions import Permissions
 from .provider import Provider
 from .runner import Runner
-from .sessions import SessionLogger, SessionError
+from .sessions import SessionLogger, SessionError, repair_messages
 from .tools import Tools
 from .vision import Vision
 from .workspace import Workspace, WorkspaceError
@@ -579,6 +579,12 @@ def _console_loop(agent, config, permissions, workspace, root, provider,
             agent.turn(line)
         except KeyboardInterrupt:
             print("\n[interrupted]")
+            # The stop button can land mid-tool-loop, after an assistant
+            # tool_calls message has already been appended but before its
+            # results come back — heal the tail the same way Agent.turn()
+            # does defensively, so the next prompt doesn't 400 (§1.4).
+            if len(agent.messages) > 1:
+                agent.messages = agent.messages[:1] + repair_messages(agent.messages[1:])
             continue
         print()
 

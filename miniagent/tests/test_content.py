@@ -139,7 +139,7 @@ def run_turn(message):
 # Scenario 1: the bug — content is a list with only a thinking block.
 agent, out, result = run_turn({"role": "assistant", "content": bug_shape})
 check("S1 reasoning printed as text",
-      "Reasoning:\nThe user sent" in out, True)
+      "· The user sent" in out, True)
 check("S1 no raw json dump", "'type': 'thinking'" not in out, True)
 check("S1 no Assistant header (no text part)", "Assistant:" not in out, True)
 check("S1 turn returns placeholder", result, "(no response)")
@@ -149,9 +149,9 @@ check("S1 last_assistant_text is str", agent.last_assistant_text(), "")
 
 # Scenario 2: thinking block + text block in the same content list.
 agent, out, result = run_turn({"role": "assistant", "content": mixed_shape})
-check("S2 reasoning printed", "Reasoning:" in out, True)
+check("S2 reasoning printed", "· The user sent" in out, True)
 check("S2 assistant text printed",
-      "Assistant:\nHere is the overview." in out, True)
+      "Here is the overview." in out, True)
 check("S2 turn returns text part", result, "Here is the overview.")
 check("S2 last_assistant_text", agent.last_assistant_text(),
       "Here is the overview.")
@@ -163,8 +163,8 @@ agent, out, result = run_turn(
      "reasoning_content": "chain of thought"}
 )
 check("S3 reasoning_content printed",
-      "Reasoning:\nchain of thought" in out, True)
-check("S3 text printed", "Assistant:\nAnswer!" in out, True)
+      "· chain of thought" in out, True)
+check("S3 text printed", "Answer!" in out, True)
 check("S3 turn returns text", result, "Answer!")
 
 # Scenario 4: tool call whose message also carries block content — the

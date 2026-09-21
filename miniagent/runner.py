@@ -263,6 +263,13 @@ class Runner:
         for name in list(sys.modules):
             if name in previous:
                 continue
+            # Never evict the running harness's own modules from
+            # sys.modules, even when the workspace root is site-packages
+            # (the self-editing case) — otherwise a validation script that
+            # imports miniagent.* would hot-reload the live harness
+            # mid-session (§1.5).
+            if name == "miniagent" or name.startswith("miniagent."):
+                continue
             mod = sys.modules.get(name)
             if mod is None:
                 continue

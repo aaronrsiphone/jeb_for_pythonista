@@ -98,6 +98,7 @@ class Permissions:
         self._prompt = prompt or _default_prompt
         self._data = self._load()
         self._session: dict[str, dict[str, str]] = {}
+        self._legend_shown = False
 
     # -- persistence --------------------------------------------------------
 
@@ -177,25 +178,32 @@ class Permissions:
 
     def _ask(self, capability: str, title: str, details: str) -> tuple[str, str]:
         """Prompt the user, returning ``(decision_token, comment)``."""
-        print()
-        print("=" * 68)
-        print(f"PERMISSION REQUEST: {title}")
-        print(f"Capability: {capability}")
-        print("-" * 68)
-        print(_trunc(details, _MAX_DIFF_CHARS))
-        print("-" * 68)
-        print("y  allow once")
-        print("s  allow this capability for this session")
-        print("a  always allow for this workspace")
-        print("n  deny once")
-        print("d  deny this capability for this session")
-        print("x  always deny for this workspace")
-        print()
-        print("You may append a comment for the agent after any choice, e.g.")
-        print('  "y. But also can you check xyz"  or  "n. Write it to foo/bar"')
+        if not self._legend_shown:
+            # First prompt of this instance's lifetime: show everything,
+            # including the choice-letter legend, exactly as before.
+            print()
+            print("=" * 68)
+            print(f"PERMISSION REQUEST: {title}")
+            print(f"Capability: {capability}")
+            print("-" * 68)
+            print(_trunc(details, _MAX_DIFF_CHARS))
+            print("-" * 68)
+            _print_legend()
+            self._legend_shown = True
+            prompt_message = "Permission [y/s/a/n/d/x]: "
+        else:
+            # Subsequent prompts: compact header, no legend, no rules.
+            print(f"PERMISSION  {capability}  {title}")
+            print(_trunc(details, _MAX_DIFF_CHARS))
+            prompt_message = "[y/s/a/n/d/x ?] "
 
         while True:
-            raw = self._prompt("Permission [y/s/a/n/d/x]: ")
+            raw = self._prompt(prompt_message)
+
+            if raw.strip() == "?":
+                # Not a real answer — reprint the legend and re-prompt.
+                _print_legend()
+                continue
 
             parsed = _parse_choice(raw)
             if parsed is None:
@@ -257,6 +265,23 @@ class Permissions:
         self._session.pop(self.project_key, None)
         self._data.get("projects", {}).pop(self.project_key, None)
         self._save()
+
+
+def _print_legend():
+    """Print the six choice-letter lines plus the comment-syntax hint.
+
+    Shown in full on the first permission prompt of a session, and again on
+    demand whenever the user answers ``?``.
+    """
+    print("y  allow once")
+    print("s  allow this capability for this session")
+    print("a  always allow for this workspace")
+    print("n  deny once")
+    print("d  deny this capability for this session")
+    print("x  always deny for this workspace")
+    print()
+    print("You may append a comment for the agent after any choice, e.g.")
+    print('  "y. But also can you check xyz"  or  "n. Write it to foo/bar"')
 
 
 def _default_prompt(message: str) -> str:

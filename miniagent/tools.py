@@ -267,15 +267,19 @@ TOOL_SCHEMAS = [
             "description": (
                 "Read-only access to this install's Pythonista reference "
                 "material; no permission required. Actions: 'list' (index "
-                "the knowledge files shipped with miniagent), 'read' "
-                "(line-numbered contents of one knowledge file), 'search' "
-                "(literal or regex across the knowledge files), 'docs' "
+                "the files under the optional, user-populated "
+                "miniagent/knowledge/ directory, if present), 'read' "
+                "(line-numbered contents of one such file), 'search' "
+                "(literal or regex across those files), 'docs' "
                 "(offline search of Pythonista's bundled official "
                 "documentation: 'query' returns ranked symbol matches, "
                 "'page' returns a doc page's readable text, no arguments "
-                "lists the Pythonista module doc pages). No action writes "
-                "files or executes code. Knowledge paths are relative to "
-                "the knowledge root and cannot escape it."
+                "lists the Pythonista module doc pages). 'list'/'read'/"
+                "'search' report a clear error when the knowledge "
+                "directory is absent; 'docs' is independent of it and "
+                "always works. No action writes files or executes code. "
+                "Knowledge paths are relative to the knowledge root and "
+                "cannot escape it."
             ),
             "parameters": {
                 "type": "object",
@@ -339,7 +343,7 @@ class Tools:
         # tests can inject one rooted at a throwaway directory; by default
         # it is created lazily on first use from the package's knowledge
         # directory, which lives outside the project workspace.
-        self._knowledge = knowledge
+        self._kb = knowledge
         # Collaborator behind the `ask_image` tool.  Unlike knowledge it
         # cannot be self-constructed (it needs the provider config and a
         # keychain-backed key loader), so app.py passes it in; when absent,
@@ -409,8 +413,14 @@ class Tools:
             if name == "create_file":
                 relative = args.get("path", "")
                 content = args.get("content", "")
-                preview = "\n".join(content.splitlines()[:40])
-                return "CREATE FILE", f"File: {relative}\n\n{preview}"
+                lines = content.splitlines()
+                byte_count = len(content.encode("utf-8"))
+                stat_line = f"{relative}  {len(lines)} lines  {byte_count} bytes"
+                head = lines[:8]
+                body = "\n".join(head)
+                if len(lines) > 8:
+                    body += f"\n... ({len(lines) - 8} more lines)"
+                return "CREATE FILE", f"{stat_line}\n\n{body}"
 
             if name == "edit_file":
                 relative = args.get("path", "")
@@ -610,9 +620,9 @@ class Tools:
 
     def _knowledge_base(self) -> Knowledge:
         """The knowledge collaborator, created lazily on first use."""
-        if self._knowledge is None:
-            self._knowledge = Knowledge()
-        return self._knowledge
+        if self._kb is None:
+            self._kb = Knowledge()
+        return self._kb
 
     def _knowledge(self, args: dict) -> dict:
         """Dispatch the read-only knowledge tool's actions."""

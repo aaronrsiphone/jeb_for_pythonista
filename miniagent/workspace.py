@@ -294,14 +294,14 @@ class Workspace:
         if text.count(old_text) != 1:
             return f"(old_text occurs {text.count(old_text)} time(s); no unique match)"
         updated = text.replace(old_text, new_text, 1)
-        return _unified_diff(text, updated, self.rel(full))
+        return _diff_preview(text, updated, self.rel(full))
 
     def preview_overwrite(self, path: str, content: str):
         full = self.resolve(path)
         if not full.exists() or not full.is_file():
             return f"(cannot preview: {path})"
         old = full.read_text(encoding="utf-8")
-        return _unified_diff(old, content, self.rel(full))
+        return _diff_preview(old, content, self.rel(full))
 
     # -- internals ---------------------------------
 
@@ -352,6 +352,38 @@ def _unified_diff(old: str, new: str, label: str, max_lines: int = 400) -> str:
             out.append("...(diff truncated)...\n")
             break
     return "".join(out) or "(no changes)"
+
+
+def _diff_stat(old: str, new: str) -> str:
+    """Return a short summary like ``"+6 -2"`` for the change from *old* to *new*."""
+    import difflib
+
+    added = 0
+    removed = 0
+    for line in difflib.unified_diff(
+        old.splitlines(keepends=True),
+        new.splitlines(keepends=True),
+    ):
+        if line.startswith("+++") or line.startswith("---"):
+            continue
+        if line.startswith("+"):
+            added += 1
+        elif line.startswith("-"):
+            removed += 1
+    return f"+{added} -{removed}"
+
+
+def _diff_preview(old: str, new: str, label: str, max_lines: int = 60) -> str:
+    """Return a human-facing preview: a stat-line header, then a capped diff.
+
+    Used only by ``preview_edit``/``preview_overwrite`` for the permission
+    prompt shown to the human; never sent to the model.
+    """
+    diff_text = _unified_diff(old, new, label, max_lines=max_lines)
+    stat = _diff_stat(old, new)
+    hunks = sum(1 for line in diff_text.splitlines() if line.startswith("@@"))
+    header = f"{label}   {stat}   ({hunks} hunk(s))"
+    return f"{header}\n\n{diff_text}"
 
 
 def _compile_search_matcher(pattern, case_sensitive, regex):

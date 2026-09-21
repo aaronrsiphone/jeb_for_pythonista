@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 
 from .provider import Provider, ProviderError
+from .sessions import repair_messages
 
 
 class AgentError(Exception):
@@ -112,6 +113,12 @@ class Agent:
         self._system_prompt = system_prompt
         self.recorder = recorder
         self.messages = [{"role": "system", "content": system_prompt}]
+        # Usage accounting (§1.7): last_usage is the most recent response's
+        # "usage" dict (provider-shaped, may be empty); session_usage sums
+        # numeric fields across the agent's lifetime for a future status
+        # line. Pure data capture — no printing here.
+        self.last_usage = {}
+        self.session_usage = {}
 
     # -- introspection -----------------------------
 
@@ -157,6 +164,17 @@ class Agent:
 
     def turn(self, user_text: str) -> str:
         """Run one user turn, returning the assistant's final text."""
+        # Defensive repair (§1.4): an interrupted previous turn (e.g. the
+        # Pythonista stop button raising KeyboardInterrupt mid-tool-loop) can
+        # leave self.messages ending in an assistant tool_calls message with
+        # no matching tool results, which most providers reject with a 400.
+        # Heal the tail before adding to it. repair_messages() drops all
+        # system-role messages from what it's given, so only the tail after
+        # the system prompt is passed through it — the system prompt itself
+        # (self.messages[0]) is preserved untouched.
+        if len(self.messages) > 1:
+            self.messages = self.messages[:1] + repair_messages(self.messages[1:])
+
         self._append({"role": "user", "content": user_text})
 
         for _ in range(self.max_steps):
@@ -168,7 +186,18 @@ class Agent:
                 print()
                 print("Provider error:")
                 print(exc)
-                return ""
+                # Keep the conversation and session log balanced: every user
+                # turn gets a reply, even a synthetic one (§1.6).
+                text = f"[provider error: {exc}]"
+                self._append({"role": "assistant", "content": text})
+                return text
+
+            usage = response.get("usage") if isinstance(response, dict) else None
+            usage = usage if isinstance(usage, dict) else {}
+            self.last_usage = usage
+            for key, value in usage.items():
+                if isinstance(value, (int, float)) and not isinstance(value, bool):
+                    self.session_usage[key] = self.session_usage.get(key, 0) + value
 
             message = Provider.extract_message(response)
 
@@ -190,13 +219,17 @@ class Agent:
                 if part
             )
             if reasoning:
-                print()
-                print("Reasoning:")
-                print(reasoning)
+                # §3.1: collapse the reasoning dump to one line — it is the
+                # single largest source of scroll and is usually skimmed at
+                # best. Long reasoning collapses to a char count; short
+                # reasoning is shown inline (newlines flattened to spaces so
+                # it stays one line).
+                if len(reasoning) > 200:
+                    print(f"· thinking ({len(reasoning)} chars)")
+                else:
+                    print(f"· {' '.join(reasoning.split())}")
 
             if content:
-                print()
-                print("Assistant:")
                 print(content)
 
             tool_calls = message.get("tool_calls")
@@ -219,9 +252,6 @@ class Agent:
                 function = call.get("function", {}) or {}
                 name = function.get("name", "")
 
-                print()
-                print(f"Tool request: {name}")
-
                 result = self.tools.dispatch(call)
 
                 # Status line matching the original jeb.py output, with the
@@ -235,15 +265,20 @@ class Agent:
                 note = f" — {comment}" if comment else ""
 
                 if parsed.get("ok"):
-                    print(f"Tool result: ok{note}")
+                    status = "ok"
                 elif parsed.get("denied"):
-                    print(f"Tool result: denied{note}")
+                    status = "denied"
                 elif parsed.get("blocked"):
-                    print(f"Tool result: blocked{note}")
+                    status = "blocked"
                 elif parsed.get("error"):
-                    print(f"Tool result: error{note}")
+                    status = "error"
                 else:
-                    print(f"Tool result: ok{note}")
+                    status = "ok"
+
+                # §3.1: one line per tool call (request + result combined),
+                # printed once dispatch completes, instead of a separate
+                # "Tool request" line before and a "Tool result" line after.
+                print(f"→ {name}  {status}{note}")
 
                 self._append(
                     {
