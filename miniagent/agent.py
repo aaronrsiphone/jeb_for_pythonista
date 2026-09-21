@@ -3,12 +3,23 @@
 The agent owns the conversation, the system prompt, and the per-turn step
 budget.  It depends on a provider and a tools dispatcher but does not know
 about Pythonista-specific startup details.
+
+``Agent.turn()`` is a generator and prints nothing: everything it used to
+write to the console is now a :mod:`miniagent.events` event yielded to a
+driver, which renders it however it likes.  Every turn yields exactly one
+terminal event — :class:`~miniagent.events.TurnEnded` or
+:class:`~miniagent.events.TurnFailed`.
 """
 
 from __future__ import annotations
 
-import json
-
+from .events import (
+    AssistantText,
+    ReasoningChunk,
+    StepLimitReached,
+    TurnEnded,
+    TurnFailed,
+)
 from .provider import Provider, ProviderError
 from .sessions import repair_messages
 
@@ -162,8 +173,19 @@ class Agent:
 
     # -- turn --------------------------------------
 
-    def turn(self, user_text: str) -> str:
-        """Run one user turn, returning the assistant's final text."""
+    def turn(self, user_text: str):
+        """Run one user turn as a generator of :mod:`miniagent.events` events.
+
+        The driver pumps the generator and ``send()``s a ``PermissionAnswer``
+        back for each :class:`~miniagent.events.PermissionNeeded`, and
+        ``None`` for every other event.  Tool events are produced by
+        ``Tools.dispatch`` and pass through the ``yield from`` below.
+
+        Exactly one terminal event is yielded per turn:
+        :class:`~miniagent.events.TurnEnded` on a normal finish or on the
+        step limit, :class:`~miniagent.events.TurnFailed` when a provider
+        call fails.
+        """
         # Defensive repair (§1.4): an interrupted previous turn (e.g. the
         # Pythonista stop button raising KeyboardInterrupt mid-tool-loop) can
         # leave self.messages ending in an assistant tool_calls message with
@@ -177,20 +199,23 @@ class Agent:
 
         self._append({"role": "user", "content": user_text})
 
+        # Token accounting for this turn only, summed across every model call
+        # it makes and handed to the driver on the terminal event.  The
+        # lifetime totals in self.session_usage are updated alongside it.
+        turn_usage: dict = {}
+
         for _ in range(self.max_steps):
             try:
                 response = self.provider.chat(
                     self.messages, tools=self.tools.schemas
                 )
             except ProviderError as exc:
-                print()
-                print("Provider error:")
-                print(exc)
                 # Keep the conversation and session log balanced: every user
                 # turn gets a reply, even a synthetic one (§1.6).
                 text = f"[provider error: {exc}]"
                 self._append({"role": "assistant", "content": text})
-                return text
+                yield TurnFailed(error=str(exc), text=text)
+                return
 
             usage = response.get("usage") if isinstance(response, dict) else None
             usage = usage if isinstance(usage, dict) else {}
@@ -198,6 +223,7 @@ class Agent:
             for key, value in usage.items():
                 if isinstance(value, (int, float)) and not isinstance(value, bool):
                     self.session_usage[key] = self.session_usage.get(key, 0) + value
+                    turn_usage[key] = turn_usage.get(key, 0) + value
 
             message = Provider.extract_message(response)
 
@@ -219,18 +245,13 @@ class Agent:
                 if part
             )
             if reasoning:
-                # §3.1: collapse the reasoning dump to one line — it is the
-                # single largest source of scroll and is usually skimmed at
-                # best. Long reasoning collapses to a char count; short
-                # reasoning is shown inline (newlines flattened to spaces so
-                # it stays one line).
-                if len(reasoning) > 200:
-                    print(f"· thinking ({len(reasoning)} chars)")
-                else:
-                    print(f"· {' '.join(reasoning.split())}")
+                # The full text goes out unmodified: whether to show it,
+                # collapse it to one line or drop it is the renderer's call,
+                # not the engine's.
+                yield ReasoningChunk(reasoning)
 
             if content:
-                print(content)
+                yield AssistantText(content)
 
             tool_calls = message.get("tool_calls")
 
@@ -245,40 +266,22 @@ class Agent:
             self._append(assistant_message)
 
             if not tool_calls:
-                return content if content else "(no response)"
+                yield TurnEnded(
+                    text=content if content else "(no response)",
+                    usage=turn_usage,
+                )
+                return
 
             for call in tool_calls:
                 call_id = call.get("id", "")
                 function = call.get("function", {}) or {}
                 name = function.get("name", "")
 
-                result = self.tools.dispatch(call)
-
-                # Status line matching the original jeb.py output, with the
-                # user's permission comment (if any) shown alongside.
-                try:
-                    parsed = json.loads(result)
-                except Exception:
-                    parsed = {}
-
-                comment = str(parsed.get("user_comment") or "").strip()
-                note = f" — {comment}" if comment else ""
-
-                if parsed.get("ok"):
-                    status = "ok"
-                elif parsed.get("denied"):
-                    status = "denied"
-                elif parsed.get("blocked"):
-                    status = "blocked"
-                elif parsed.get("error"):
-                    status = "error"
-                else:
-                    status = "ok"
-
-                # §3.1: one line per tool call (request + result combined),
-                # printed once dispatch completes, instead of a separate
-                # "Tool request" line before and a "Tool result" line after.
-                print(f"→ {name}  {status}{note}")
+                # dispatch() owns the whole tool-call lifecycle: its
+                # ToolStarted / PermissionNeeded / ToolCompleted events pass
+                # straight through to the driver, and the JSON for the model
+                # comes back as the generator's return value.
+                result = yield from self.tools.dispatch(call)
 
                 self._append(
                     {
@@ -290,6 +293,7 @@ class Agent:
                 )
             # loop continues: send tool results back to the model
 
-        print()
-        print("Per-turn agent step limit reached.")
-        return "[maximum agent steps reached; stopping]"
+        yield StepLimitReached(self.max_steps)
+        yield TurnEnded(
+            text="[maximum agent steps reached; stopping]", usage=turn_usage
+        )

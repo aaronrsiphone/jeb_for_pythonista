@@ -2,6 +2,16 @@
 
 Permission enforcement is centralised in ``Tools.dispatch`` so that individual
 tool implementations do not each re-implement the check.
+
+``dispatch`` is a *generator*: it yields the events of one tool call's
+lifecycle (:class:`~miniagent.events.ToolStarted`, optionally
+:class:`~miniagent.events.PermissionNeeded`, then
+:class:`~miniagent.events.ToolCompleted`) and ``return``s the JSON string the
+model receives.  Callers drive it with ``result = yield from
+tools.dispatch(call)``.  Asking the user is therefore no longer something the
+tool layer does behind the agent's back with ``input()``: it is an event the
+driver answers by ``send()``-ing a
+:class:`~miniagent.events.PermissionAnswer` back in.
 """
 
 from __future__ import annotations
@@ -9,6 +19,7 @@ from __future__ import annotations
 import json
 
 from . import permissions as _perm
+from .events import PermissionNeeded, ToolCompleted, ToolStarted
 from .knowledge import Knowledge, KnowledgeError
 from .runner import Runner, RunnerError
 from .vision import Vision, VisionError
@@ -362,44 +373,64 @@ class Tools:
 
     # -- dispatch -----------------------------------------------------------
 
-    def dispatch(self, tool_call: dict) -> str:
-        """Execute one tool call, returning a JSON string for the model."""
+    def dispatch(self, tool_call: dict):
+        """Run one tool call as a generator, returning a JSON string.
+
+        Yields :class:`ToolStarted`, then — only when stored policy does not
+        already decide a gated capability — :class:`PermissionNeeded`, whose
+        answer the driver ``send()``s back, and finally
+        :class:`ToolCompleted`.  The JSON payload for the model is the
+        generator's *return* value, so callers write::
+
+            result = yield from tools.dispatch(call)
+        """
         name = tool_call.get("function", {}).get("name", "")
         raw_args = tool_call.get("function", {}).get("arguments", "{}")
-        call_id = tool_call.get("id", "")
         try:
             args = json.loads(raw_args) if isinstance(raw_args, str) else raw_args
             if not isinstance(args, dict):
                 args = {}
         except ValueError:
-            return _result({"error": "Invalid JSON arguments", "raw": raw_args})
+            # Arguments never parsed, so there are none to report.
+            yield ToolStarted(name, {})
+            outcome = {"error": "Invalid JSON arguments", "raw": raw_args}
+            yield ToolCompleted(name, "error", "", outcome)
+            return _result(outcome)
+
+        yield ToolStarted(name, args)
 
         cap = CAPABILITY_MAP.get(name)
         user_comment = ""
         if cap is not None:
-            title, details = self._preview(name, args)
-            allowed, user_comment = self.permissions.authorize_with_comment(
-                cap, title, details
-            )
+            allowed = self.permissions.decide(cap)
+            if allowed is None:
+                # Build the preview only when the user will actually see it:
+                # _preview() reads the target file and renders a diff, work
+                # that is wasted whenever stored policy already decides.
+                title, details = self._preview(name, args)
+                answer = yield PermissionNeeded(cap, title, details)
+                allowed, user_comment = self.permissions.apply_answer(cap, answer)
             if not allowed:
                 outcome = {"ok": False, "denied": True}
                 if user_comment:
                     outcome["user_comment"] = user_comment
+                yield ToolCompleted(name, "denied", user_comment, outcome)
                 return _result(outcome)
 
         try:
             outcome = self._execute(name, args)
-            return _result(_with_comment(outcome, user_comment))
         except (WorkspaceError, RunnerError, KnowledgeError, VisionError) as exc:
             msg = str(exc)
             if msg.startswith("Blocked"):
                 outcome = {"ok": False, "blocked": True, "error": msg}
             else:
                 outcome = {"ok": False, "error": msg}
-            return _result(_with_comment(outcome, user_comment))
         except Exception as exc:  # defensive: never leak a traceback to the model
             outcome = {"ok": False, "error": f"Unexpected error in '{name}': {exc}"}
-            return _result(_with_comment(outcome, user_comment))
+
+        yield ToolCompleted(name, _status_of(outcome), user_comment,
+                            outcome if isinstance(outcome, dict) else {})
+        return _result(_with_comment(outcome, user_comment))
 
     # -- preview for permission prompt --------------------------------------
 
@@ -729,6 +760,27 @@ def _required_arg(args: dict, key: str, action: str) -> str:
             f"knowledge action '{action}' requires a '{key}' argument"
         )
     return value
+
+
+def _status_of(outcome) -> str:
+    """Classify a tool outcome as ``ok``/``denied``/``blocked``/``error``.
+
+    Read straight off the outcome dict the tool layer already holds, in the
+    same precedence the console status line used when it re-parsed the
+    serialized result.  A non-dict (nothing produces one today) counts as
+    ``ok``, matching the old "otherwise" branch.
+    """
+    if not isinstance(outcome, dict):
+        return "ok"
+    if outcome.get("ok"):
+        return "ok"
+    if outcome.get("denied"):
+        return "denied"
+    if outcome.get("blocked"):
+        return "blocked"
+    if outcome.get("error"):
+        return "error"
+    return "ok"
 
 
 def _with_comment(outcome, comment: str):
