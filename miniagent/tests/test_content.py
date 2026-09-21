@@ -1,8 +1,9 @@
-"""Scratch self-test for Provider.split_content and agent display handling.
+"""Tests for Provider.split_content and agent display handling.
 
 Safe to run via run_python: no network, no file writes, no console loop.
 It re-imports the miniagent package fresh so it exercises the CURRENT source
-files, then simulates agent turns with a fake provider. Delete when done.
+files, then simulates agent turns with a fake provider. Lives permanently in
+miniagent/tests/; run it directly or through run_all.py.
 """
 
 import io
@@ -17,7 +18,9 @@ for name in [n for n in list(sys.modules)
              if n == "miniagent" or n.startswith("miniagent.")]:
     del sys.modules[name]
 
-parent = Path(__file__).resolve().parent.parent
+# The tests live in miniagent/tests/, so the importable package root (the
+# site-packages directory containing miniagent/) is three levels up.
+parent = Path(__file__).resolve().parent.parent.parent
 if str(parent) not in sys.path:
     sys.path.insert(0, str(parent))
 
@@ -188,5 +191,5 @@ check("S4 no raw json dump", "'type': 'thinking'" not in out, True)
 print()
 if failures:
     print(f"{len(failures)} FAILURE(S): {failures}")
-else:
-    print("All checks passed.")
+    raise AssertionError(f"{len(failures)} content test check(s) failed")
+print("All checks passed.")

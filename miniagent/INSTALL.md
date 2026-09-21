@@ -41,8 +41,14 @@ site-packages/
         permissions.py
         provider.py
         runner.py
+        sessions.py
         tools.py
+        vision.py
         workspace.py
+        tests/
+            __init__.py
+            run_all.py
+            test_*.py
 ```
 
 You can do this with Pythonista's own file browser (drag the `miniagent`
@@ -60,6 +66,10 @@ print(run)
 ```
 
 If both lines print without error, the package is importable and ready.
+To also confirm behavior end to end, run the bundled test suite
+(`miniagent/tests/run_all.py`) — every test is self-contained, needs no
+network, and writes only to throwaway directories under the system temp
+folder.
 
 ## 4. Use it in any project
 
@@ -93,9 +103,12 @@ projects, in an application-state directory derived at runtime.  It prefers:
 ~/Documents/miniagent/
     config.json
     permissions.json
+    sessions/
 ```
 
-falling back to `~/.miniagent/` and then a temp directory.  The API key is
+falling back to `~/.miniagent/` and then a temp directory.  `sessions/`
+holds the recorded conversation logs (`:resume`) for every workspace, one
+JSONL file per session.  The API key is
 stored in the Pythonista keychain, never in a JSON file.  You can set it from
 the MiniAgent console with:
 

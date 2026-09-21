@@ -10,6 +10,15 @@ The execution environment — stdout/stderr, argv, cwd, ``sys.path``, and the
 console-critical builtins ``input`` and ``print`` — is captured before each
 run and restored afterwards, so a script that rebinds them cannot poison the
 interactive console loop once the run ends.
+
+Interactive input is additionally **disabled for the duration of a run**:
+``builtins.input`` and ``sys.stdin`` are replaced with objects that raise
+:class:`InteractiveInputBlocked` instead of reading.  Run output is captured
+into buffers, so a real prompt would be invisible, and a blocking read on the
+real stdin would hang Pythonista with no in-process way to interrupt it —
+prevention is the only strategy.  A script may rebind ``builtins.input``
+itself to inject scripted answers; only the default interactive path is
+blocked.  See ``docs/testing.md`` for the testing patterns around this.
 """
 
 from __future__ import annotations
@@ -86,7 +95,11 @@ class Runner:
     def run(self, path: str, args=None) -> dict:
         """Execute *path* in-process and return captured output.
 
-        Returns a dict with ``stdout``, ``stderr`` and ``ok`` keys.
+        Returns a dict with ``stdout``, ``stderr`` and ``ok`` keys.  The
+        script's stdout/stderr are captured into buffers, and interactive
+        input (``input()`` / ``sys.stdin``) is disabled for the duration of
+        the run: it fails fast with ``InteractiveInputBlocked`` instead of
+        blocking forever on the invisible prompt.
         """
         args = list(args or [])
         full = self.workspace.resolve(path)
@@ -112,33 +125,40 @@ class Runner:
 
     # -- preflight ----------------------------------------------------------
 
-    def _preflight(self, source: str, full: Path):
-        try:
-            tree = ast.parse(source, filename=str(full))
-        except SyntaxError as exc:
-            raise RunnerError(f"Cannot parse {full.name}: {exc}")
+    def static_scan(self, source: str, name: str = "<script>") -> list[str]:
+        """AST-scan *source* and return human-readable findings.
 
+        This is the static preflight as a pure function: it never raises for
+        content findings.  ``_preflight`` enforces it (first finding wins),
+        and the ``run_python`` permission preview in ``tools.py`` reuses it
+        so the user sees the exact scan the runner will enforce.  A parse
+        error is returned as a finding.
+        """
+        try:
+            tree = ast.parse(source, filename=name)
+        except SyntaxError as exc:
+            return [f"Cannot parse {name}: {exc}"]
+
+        findings: list[str] = []
         for node in ast.walk(tree):
             if isinstance(node, ast.Call):
-                name = _dotted_name(node.func)
-                if name and name in _BLOCKED_CALLS:
-                    raise RunnerError(
-                        f"Blocked termination call '{name}' in {full.name}"
+                dotted = _dotted_name(node.func)
+                if dotted and dotted in _BLOCKED_CALLS:
+                    findings.append(
+                        f"Blocked termination call '{dotted}' in {name}"
                     )
             elif isinstance(node, ast.Raise):
                 if node.exc is not None and isinstance(node.exc, ast.Call):
-                    name = _dotted_name(node.exc.func)
-                    if name == "SystemExit" or name == "BaseException":
-                        raise RunnerError(
-                            f"Blocked 'raise SystemExit()' in {full.name}"
+                    dotted = _dotted_name(node.exc.func)
+                    if dotted == "SystemExit" or dotted == "BaseException":
+                        findings.append(
+                            f"Blocked 'raise SystemExit()' in {name}"
                         )
                 elif isinstance(node.exc, ast.Name) and node.exc.id in (
                     "SystemExit",
                     "BaseException",
                 ):
-                    raise RunnerError(
-                        f"Blocked 'raise SystemExit' in {full.name}"
-                    )
+                    findings.append(f"Blocked 'raise SystemExit' in {name}")
             elif isinstance(node, ast.ImportFrom):
                 module = node.module or ""
                 names = {alias.name for alias in node.names}
@@ -146,13 +166,24 @@ class Runner:
                 if blocked:
                     hits = names & blocked
                     if hits:
-                        label = "termination builtin import" if module == "builtins" else (
-                            "direct sys.exit import" if module == "sys" else
-                            "process-control os import"
+                        label = (
+                            "termination builtin import"
+                            if module == "builtins"
+                            else "direct sys.exit import"
+                            if module == "sys"
+                            else "process-control os import"
                         )
-                        raise RunnerError(
-                            f"Blocked {label} in {full.name}: {', '.join(sorted(hits))}"
+                        findings.append(
+                            f"Blocked {label} in {name}: "
+                            f"{', '.join(sorted(hits))}"
                         )
+        return findings
+
+    def _preflight(self, source: str, full: Path):
+        """Enforce the static scan before execution (first finding wins)."""
+        findings = self.static_scan(source, full.name)
+        if findings:
+            raise RunnerError(findings[0])
 
     # -- execution ----------------------------------------------------------
 
@@ -164,6 +195,7 @@ class Runner:
         old_path = list(sys.path)
         old_stdout = sys.stdout
         old_stderr = sys.stderr
+        old_stdin = sys.stdin
         old_modules = set(sys.modules)
         # Console-critical builtins: a run script that rebinds input()/print()
         # without restoring them would poison the interactive console loop
@@ -181,6 +213,15 @@ class Runner:
         err_buf = io.StringIO()
         sys.stdout = out_buf
         sys.stderr = err_buf
+        # Interactive input is impossible under run_python: stdout is
+        # captured, so a prompt would be invisible, and a blocking read on
+        # the real stdin would hang Pythonista with no in-process way to
+        # interrupt it.  Reads fail fast with a clear error instead.  A
+        # script that wants scripted answers rebinds builtins.input itself
+        # (see docs/testing.md); only the default interactive path is
+        # blocked.
+        sys.stdin = _BlockedStdin()
+        builtins.input = _BlockedInput()
 
         replacements = _install_runtime_blocks()
 
@@ -202,6 +243,7 @@ class Runner:
             _remove_runtime_blocks(replacements)
             sys.stdout = old_stdout
             sys.stderr = old_stderr
+            sys.stdin = old_stdin
             builtins.input = old_input
             builtins.print = old_print
             sys.argv = old_argv
@@ -262,6 +304,93 @@ class _BlockedTermination:
         raise RuntimeError(
             f"{self._label} blocked by the MiniAgent runner"
         )
+
+
+class InteractiveInputBlocked(RuntimeError):
+    """Raised when a run script tries to read interactive input.
+
+    Under run_python the script's stdout is captured, so a prompt would be
+    invisible, and a blocking read on the real stdin would hang Pythonista
+    with no in-process way to interrupt it.  The runner therefore replaces
+    ``builtins.input`` and ``sys.stdin`` with objects that raise this error
+    immediately, so a script that trips it fails in milliseconds with a
+    clear traceback in the run result instead of hanging the app.  Tests
+    that exercise prompting code should inject a scripted prompt — see
+    ``docs/testing.md``.
+    """
+
+
+_INPUT_BLOCKED_MESSAGE = (
+    "Interactive input is disabled under run_python: the script's output is "
+    "captured, so a prompt would be invisible and the read would block "
+    "forever, hanging Pythonista. If this script needs to test prompting "
+    "code, inject a scripted prompt or rebind builtins.input yourself (see "
+    "docs/testing.md in the miniagent package)."
+)
+
+
+class _BlockedInput:
+    """Replaces ``builtins.input`` during a run; raises instead of blocking."""
+
+    def __call__(self, *args, **kwargs):
+        raise InteractiveInputBlocked(_INPUT_BLOCKED_MESSAGE)
+
+    def __repr__(self):
+        return "<input() disabled under run_python>"
+
+
+class _BlockedStdin:
+    """Replaces ``sys.stdin`` during a run; reads raise, nothing blocks.
+
+    Read-like entry points raise :class:`InteractiveInputBlocked`
+    immediately (including iteration and ``sys.stdin.buffer.read(...)``).
+    Harmless metadata queries answer like a non-interactive stream so code
+    that merely *asks* about stdin can proceed without reading it.
+    """
+
+    encoding = "utf-8"
+    errors = "replace"
+    closed = False
+
+    def _blocked(self, *args, **kwargs):
+        raise InteractiveInputBlocked(_INPUT_BLOCKED_MESSAGE)
+
+    # Every read-like entry point fails fast instead of blocking.
+    read = _blocked
+    readline = _blocked
+    readlines = _blocked
+    read1 = _blocked
+    __next__ = _blocked
+    __iter__ = _blocked
+
+    @property
+    def buffer(self):
+        # sys.stdin.buffer.read(...) hits the same loud failure.
+        return self
+
+    def close(self):
+        pass
+
+    def flush(self):
+        pass
+
+    def isatty(self):
+        return False
+
+    def readable(self):
+        return False
+
+    def writable(self):
+        return False
+
+    def seekable(self):
+        return False
+
+    def fileno(self):
+        raise io.UnsupportedOperation("stdin is disabled under run_python")
+
+    def __repr__(self):
+        return "<stdin disabled under run_python>"
 
 
 def _install_runtime_blocks() -> dict:

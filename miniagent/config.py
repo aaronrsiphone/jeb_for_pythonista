@@ -9,6 +9,7 @@ The file has this shape::
     {
       "provider": "mistral",          # currently selected provider
       "model": "zai-glm-5-3",         # currently selected model
+      "vision_model": "mistral/pixtral-12b-2409",  # used by ask_image
       "providers": {
         "mistral": {
           "base_url": "https://api.mistral.ai/v1",
@@ -23,6 +24,12 @@ The file has this shape::
         }
       }
     }
+
+``vision_model`` selects the provider/model pair the ``ask_image`` tool
+sends images to; the format is ``<provider>/<model-name>``, or a bare model
+name to use the currently selected provider.  It is optional: when absent,
+``ask_image`` reports that no vision model is configured.  Unknown top-level
+keys are preserved on load/save.
 
 Older flat configs (``base_url`` / ``model`` at the top level) are migrated
 automatically the first time they are loaded: the single provider is named
@@ -218,6 +225,19 @@ def _coerce(key: str, value):
     else:
         value = str(value)
     return value
+
+
+def _split_vision_model(value: str) -> tuple[str | None, str]:
+    """Split a ``vision_model`` value into ``(provider, model)``.
+
+    ``"mistral/pixtral-12b-2409"`` -> ``("mistral", "pixtral-12b-2409")``; a
+    bare model name -> ``(None, name)`` (the selected provider is used).
+    """
+    text = str(value or "").strip()
+    if "/" in text:
+        provider, _, model = text.partition("/")
+        return provider.strip() or None, model.strip()
+    return None, text
 
 
 class Config:
@@ -421,6 +441,17 @@ class Config:
                 settings["model"] = self._data["model"]
                 if self._data["model"] and self._data["model"] not in settings["models"]:
                     settings["models"].append(self._data["model"])
+        elif key == "vision_model":
+            value = str(value).strip()
+            provider, model = _split_vision_model(value)
+            if provider is not None and provider not in self._data["providers"]:
+                known = ", ".join(sorted(self._data["providers"])) or "(none)"
+                raise KeyError(
+                    f"Unknown vision provider: {provider}. Available: {known}"
+                )
+            if not model:
+                raise KeyError("vision_model needs a model name after the provider")
+            self._data["vision_model"] = value
         elif key in _SETTABLE_PROVIDER_KEYS:
             name = self._data["provider"]
             if not name:
@@ -441,8 +472,11 @@ class Config:
         lines = [
             f"  provider = {data['provider']!r}",
             f"  model = {data['model']!r}",
-            "  providers:",
         ]
+        vision_model = str(data.get("vision_model", "") or "")
+        if vision_model:
+            lines.append(f"  vision_model = {vision_model!r}")
+        lines.append("  providers:")
         for name, settings in data["providers"].items():
             tag = "  (selected)" if name == data["provider"] else ""
             lines.append(f"    {name}{tag}:")
