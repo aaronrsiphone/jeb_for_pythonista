@@ -1,0 +1,505 @@
+# Rearchitecture proposal: mobile ergonomics and agent self-editing
+
+A review of MiniAgent as it stands (6,206 lines across 18 modules) against two
+goals: **make the harness pleasant to drive from a phone**, and **make the
+harness safe and cheap for an agent to edit in place**. Both goals turn out to
+push in the same direction, because both are limited by the same thing — the
+engine and its terminal front end are the same code.
+
+This document states what is wrong, what to build, and in what order. It is a
+plan, not a changelog; nothing here is implemented yet.
+
+---
+
+## 1. Defects to fix first (independent of any redesign)
+
+These are live bugs found while reading the code. Each is small; two of them
+break advertised functionality outright.
+
+### 1.1 The `knowledge` tool is dead code
+
+`Tools.__init__` sets an *instance attribute* with the same name as a method:
+
+```python
+self._knowledge = knowledge        # tools.py:342 — attribute
+...
+def _knowledge(self, args): ...   # tools.py:617 — method, now shadowed
+```
+
+The attribute always wins. `_execute()` reaches `return self._knowledge(args)`
+and calls `None` (or a `Knowledge` instance, which is not callable). Every
+`knowledge` call raises `TypeError`, is swallowed by the defensive
+`except Exception` in `dispatch`, and comes back to the model as
+`"Unexpected error in 'knowledge'"`. The tool is in `TOOL_SCHEMAS`, so the
+model is told it exists and will keep trying.
+
+Fix: rename the attribute to `_kb` (and `_knowledge_base()` to match). The
+deeper fix is §6 — there is no test that dispatches every declared tool, which
+is exactly why this shipped.
+
+### 1.2 `miniagent/knowledge/` does not exist
+
+`knowledge.py`'s module docstring describes a shipped library of markdown
+environment maps plus `probe.py` and `lookup_docs.py`. None of it is in the
+repo. `Knowledge.__init__` degrades to `available == False`, so `list`/`read`/
+`search` raise "Knowledge base not available" while `docs` still works. Either
+ship the directory or cut the claim from the docstring and the tool
+description.
+
+### 1.3 `_jeb.py` is documented but absent
+
+`README.md`'s package-layout table lists `_jeb.py` ("Example one-line launcher
+script"), and `docs/self_editing.md` §4 points at it. The file does not exist;
+`INSTALL.md` tells you to type the launcher by hand. Ship the file or drop both
+references. A self-editing agent that trusts the layout table will waste a turn
+on a `read_file` that fails.
+
+### 1.4 An interrupted turn corrupts the live history
+
+`repair_messages()` (sessions.py:78) exists precisely to strip an assistant
+message whose `tool_calls` have no matching `tool` results — but it is only
+called from `SessionLogger.load()`. It is never applied to `agent.messages`.
+
+On iOS the Pythonista stop button is the *only* way out of a long turn, and it
+raises `KeyboardInterrupt`, which `_console_loop` catches around `agent.turn`.
+At that moment the history very often ends with an assistant `tool_calls`
+message and no results. The next prompt appends a user message on top of that
+and sends it: most OpenAI-compatible servers reject the request with a 400, and
+the session is stuck until `:reset`.
+
+Fix: run `repair_messages` over `agent.messages` in the `KeyboardInterrupt`
+handler, and again at the top of `Agent.turn`. Three lines.
+
+### 1.5 `run_python` can hot-reload the live harness during self-editing
+
+`Runner._purge_stale_imports` deletes from `sys.modules` any module whose
+`__file__` sits under the workspace root. When the workspace *is*
+site-packages — which is exactly the self-editing case, and what the console
+banner in the attached screenshots shows — that set includes `miniagent`
+itself. A validation script that imports `miniagent.tools` causes the running
+harness's own modules to be evicted and re-imported from half-edited source
+mid-session.
+
+Fix: never purge a module whose name is `miniagent` or starts with
+`miniagent.`. See also §5.3.
+
+### 1.6 A provider error leaves a one-sided turn
+
+`Agent.turn` appends (and records) the user message, then returns `""` on
+`ProviderError`. The conversation and the session log now contain a user
+message with no reply. Record a synthetic assistant note, or pop the user
+message back off. Related: there is no retry at all (§4.2).
+
+### 1.7 Response `usage` is discarded
+
+`Provider.chat` returns the whole response dict; `Agent` reads only
+`choices[0].message`. Token counts are right there and are never surfaced.
+Everything in §4.3 depends on capturing them.
+
+---
+
+## 2. The central structural problem
+
+`print()` and `input()` are called from five modules:
+
+| Module | What it prints / reads |
+|---|---|
+| `agent.py` | reasoning, assistant text, `Tool request:` / `Tool result:` lines |
+| `permissions.py` | the whole permission prompt; reads the answer with `input()` |
+| `app.py` | banner, all command output, `:resume` pager, `You>` prompt |
+| `config.py` | first-run setup questions |
+| `sessions.py` | the logging-disabled warning |
+
+Consequences:
+
+- **The engine cannot be driven by anything but a TTY.** A Pythonista `ui`
+  front end, a notification-driven background run, or a test harness all have
+  to monkeypatch `builtins.input` — which `docs/testing.md` documents as the
+  supported technique. That is a workaround for a missing seam.
+- **Every presentation decision is a code change in the engine.** Wanting
+  shorter output on a phone means editing `agent.py`, which is also the file
+  that owns the model loop.
+- **Permission prompts block deep in the call stack.** `Tools.dispatch` →
+  `Permissions.authorize_with_comment` → `input()`, six frames below the
+  console loop. Nothing else can happen while that blocks, and no other UI can
+  answer it.
+
+Everything else in this document is easier once this is fixed, so it is the one
+genuinely architectural change proposed.
+
+### 2.1 Turn the agent loop into an event stream
+
+`Agent.turn()` becomes a generator that yields typed events and accepts
+responses for the ones that need them:
+
+```python
+# events.py
+@dataclass class ReasoningChunk:  text: str
+@dataclass class AssistantText:   text: str
+@dataclass class ToolRequested:   name: str; args: dict
+@dataclass class PermissionNeeded: capability: str; title: str; details: str
+@dataclass class ToolCompleted:   name: str; status: str; summary: str; payload: dict
+@dataclass class TurnEnded:       text: str; usage: dict
+@dataclass class TurnFailed:      error: str
+```
+
+```python
+for event in agent.turn(user_text):
+    reply = ui.handle(event)          # returns PermissionAnswer, or None
+    if reply is not None:
+        agent.respond(reply)
+```
+
+`Permissions` keeps the policy (session/persistent decisions, the `y/s/a/n/d/x`
+semantics, comment parsing) and loses the I/O: `authorize()` either answers
+from stored policy or raises the question as an event.
+
+### 2.2 Front ends become interchangeable
+
+```
+miniagent/
+    ui/
+        __init__.py     # pick a renderer
+        console.py      # today's verbose terminal output, preserved verbatim
+        compact.py      # the mobile renderer (§3) — new default on iOS
+        headless.py     # scripted answers, captured output → for tests
+        pythonista.py   # later: a real ui.View front end (§7)
+```
+
+This is what unlocks both goals at once: mobile output becomes a renderer, not
+a rewrite of the agent, and `Tools.dispatch` becomes testable without touching
+`builtins`.
+
+---
+
+## 3. Mobile interface
+
+The screenshots show the concrete problem: a single permission prompt fills the
+entire visible screen with boilerplate, and a single tool call scrolls the
+useful content off the top.
+
+### 3.1 Cut the fixed overhead
+
+**Permission prompt.** Today every prompt prints 14 lines before the question:
+six choice lines, a blank, two lines explaining comment syntax, plus rules and
+a title. On a phone that is the whole screen, every time, forever. Print the
+legend once per session, then:
+
+```
+PERMISSION  create_file  miniagent/ui/compact.py  (86 lines)
+[y/s/a/n/d/x ?] >
+```
+
+`?` reprints the legend. This alone reclaims roughly 12 lines per approval,
+and there are many approvals per task.
+
+**Reasoning.** `agent.py` prints the full chain of thought unconditionally.
+It is the single largest source of scroll and is usually skimmed at best.
+Collapse to one line, keep the text retrievable:
+
+```
+· thinking (412 chars)      :think  to expand the last one
+```
+
+`:think on` restores always-expanded for a debugging session.
+
+**Blank lines.** Almost every `print()` in `agent.py` is preceded by
+`print()`. That doubles the transcript length for no information. Let the
+renderer own vertical spacing.
+
+**Tool lines.** Four lines and two blanks per call becomes one:
+
+```
+→ read_file  app.py:1-80            ok   80 lines
+→ edit_file  agent.py               ok   +6 −2
+→ run_python tests/run_all.py       ok   4 passed
+```
+
+Combined, a five-tool turn goes from roughly 90 lines to about 12.
+
+### 3.2 Respect the screen width
+
+Nothing in the codebase knows how wide the console is. Diffs, JSON payloads and
+long source lines wrap mid-token (visible in the second screenshot). Add a
+`width()` helper — `ui.get_screen_size()` under Pythonista, `shutil.get_terminal_size()`
+elsewhere, 44 columns as the floor — and have the renderer wrap with a
+continuation marker, clipping long paths from the left (`…/tests/run_all.py`)
+rather than the right.
+
+### 3.3 Previews that fit
+
+`create_file` previews 40 lines of content; `edit_file` and `overwrite_file`
+preview a diff capped at 400 lines. On a phone the decision is almost always
+made on the first few lines. Lead with a stat line, show a short body, keep the
+rest one command away:
+
+```
+EDIT  miniagent/agent.py   +6 −2   (1 hunk)
+  @@ -142,7 +142,11 @@
+  -            if reasoning:
+  +            if reasoning and self.verbose:
+  … 14 more lines —  :show
+```
+
+### 3.4 Composing input on a phone
+
+`input("You> ")` is single-line, has no history, and cannot be edited once a
+word is wrong. Four cheap additions:
+
+- **`:paste`** — take the clipboard as the prompt. Pythonista ships the
+  `clipboard` module. This is the real answer for long prompts on iOS: compose
+  in any app with a decent editor, paste in one tap.
+- **Multi-line mode** — a trailing `\` continues; `:::` opens and closes a
+  fenced block.
+- **History** — `:!` repeats the last prompt, `:!n` the nth back, `:h` lists.
+- **`@path` expansion** — `explain @agent.py:100-160` inlines the file
+  reference so the model does not need a round trip to find it. On a cellular
+  connection each saved round trip is several seconds.
+
+Also: single-letter aliases for the common commands (`:f` `:m` `:r` `:c` `:q`),
+and the numbered-choice pattern `:resume` already uses generalised to any list
+prompt. Digits and single letters are the cheapest possible taps.
+
+### 3.5 A status line that answers "is it working?"
+
+The second screenshot captures the failure: a tool request, then a wall of
+dashes, then nothing. Keep one line, reprinted only when it changes:
+
+```
+mistral/zai-glm-5-3 · effort high · 18 msgs · ~14k tok · 23s
+```
+
+With streaming (§4.1) the elapsed counter becomes a live token counter, which
+is what actually distinguishes "thinking" from "the socket died when the screen
+locked".
+
+---
+
+## 4. Network behaviour on a phone
+
+### 4.1 Stream responses
+
+`Provider._body` never sets `stream`. Every turn is a blocking POST with a
+120-second timeout and no output until it completes. With SSE parsing, first
+tokens arrive in about a second, and the renderer can show reasoning progress
+without printing it in full. On mobile this is the difference between a tool
+that feels alive and one that feels hung.
+
+### 4.2 Retry, and shorten the timeout
+
+A single `requests.RequestException` ends the turn (§1.6). iOS drops sockets
+when the app backgrounds or the screen locks — this is routine, not an edge
+case. Add bounded retry with backoff on connection errors, 429 and 5xx; drop
+the per-attempt timeout to something like 45s now that there are attempts.
+
+### 4.3 Survive suspension
+
+Sessions already append every message to JSONL, and `repair_messages` already
+knows how to heal a truncated tail. Add a `pending` marker written before each
+provider call and cleared after, so `:resume` can tell "finished cleanly" from
+"killed mid-turn" and offer to re-issue rather than silently losing the work.
+
+### 4.4 Bound the context
+
+Nothing prunes the message array. Each tool result may be up to 40,000
+characters (`_RESULT_LIMIT`), and `read_file` results are typically the largest
+thing in the conversation. A long phone session — which is the normal shape of
+phone usage: many short bursts over hours — grows until the provider rejects
+it, with no warning and no recovery but `:reset`.
+
+Add token accounting from the `usage` field (§1.7), show it in the status line,
+and compact automatically at a threshold: replace tool results older than N
+messages with a one-line digest (`[read_file app.py:1-80 — 80 lines, elided]`),
+keeping the user/assistant narrative intact. Expose `:compact` for manual use.
+
+---
+
+## 5. Self-editing
+
+### 5.1 Give the model editing primitives that do not fail
+
+`edit_file` requires the old text to appear **exactly once**. On an 887-line
+`app.py` that is the highest-failure-rate operation in the tool set, and every
+failure costs a full round trip on a cellular connection. Three changes:
+
+- **Better failure messages.** "old_text not found in file" tells the model
+  nothing. Return the closest match with a character-level diff — most failures
+  are a whitespace or line-ending mismatch and the model can fix them in one
+  step if it is shown what differs.
+- **`occurrence` / `replace_all`.** Non-unique matches are currently a hard
+  failure rather than a parameter.
+- **`multi_edit` and `apply_patch`.** A list of edits applied atomically to one
+  file, and a unified-diff applier for multi-hunk changes. One permission
+  prompt per coherent change instead of five — which matters twice over on
+  mobile, where each prompt is a screen.
+
+Consider collapsing `create_file` / `overwrite_file` into one `write_file` with
+an explicit `expect: "absent" | "exists" | "any"`, keeping the capability
+distinction derived from the resolved mode. Two near-identical tools with
+different permissions is a thing the model gets wrong.
+
+### 5.2 A safety net for editing the harness that is running
+
+**This is the largest missing piece.** An agent editing `app.py` *from inside*
+`app.py` has no rollback. `to_delete/` covers scratch files the agent created;
+it does not cover a botched edit to the harness. Recovery today is re-copying
+the package from the Files app.
+
+- **Checkpoints.** Before the first mutation of any file within a turn,
+  snapshot it under `<state_dir>/checkpoints/<workspace>/<turn-id>/`. Outside
+  the workspace, so the agent's own file tools cannot reach it — the same
+  reasoning that already keeps `permissions.json` out of reach. Add `:undo`
+  (restore the previous turn's snapshots) and `:checkpoints`.
+- **Compile gate.** Any write to a `*.py` path is `compile()`d before the
+  atomic rename. A syntax error refuses the write and returns the error to the
+  model as a tool error it can act on immediately. This is about ten lines in
+  `Workspace._atomic_write` and it eliminates the single worst self-edit
+  outcome: a harness that will not start.
+
+### 5.3 Make self-edit mode explicit
+
+Detect at startup whether the running `miniagent` package lives inside
+`workspace.root`. When it does:
+
+- say so in the banner — the user should know the agent is editing its own
+  runtime;
+- never purge `miniagent.*` from `sys.modules` (§1.5);
+- warn on `run_python` for scripts that import `miniagent`, since the imported
+  code will not be the code that is running.
+
+A `:reload` command that rebuilds the object graph from freshly imported
+modules without quitting Pythonista would shorten the edit/test loop
+considerably. It needs care — the console loop would have to re-enter — but the
+edit-restart-reconfigure cycle is currently the slowest part of self-editing.
+
+### 5.4 Structural reads
+
+The only way for the model to find a function today is `read_file` on the whole
+module or a `search_files` guess. Add `outline` (list `def`/`class` with line
+ranges, via `ast`) and let `read_file` accept a symbol name. For an 887-line
+module this cuts the tokens spent locating an edit site by an order of
+magnitude — directly, on every self-edit task, on a metered connection.
+
+### 5.5 One place to add a tool, one place to add a command
+
+Adding a tool today means four edits in four regions of `tools.py`
+(`TOOL_SCHEMAS`, `CAPABILITY_MAP`, `_execute`'s if-chain, `_preview`'s
+if-chain), and `docs/self_editing.md` documents it as a six-step checklist.
+Adding a console command means editing `_console_loop`'s if-chain,
+`_print_help`, the README table, and `docs/self_editing.md`.
+
+A checklist that long is a design smell, and for an agent it is four chances to
+half-finish a change. Replace both with registries:
+
+```python
+@tool(capability=perm.EDIT)
+def edit_file(ws, path: str, old_text: str, new_text: str) -> dict:
+    """Replace exactly one unique text occurrence in an existing file."""
+    ...
+
+@edit_file.preview
+def _(ws, path, old_text, new_text):
+    return "EDIT FILE", ws.preview_edit(path, old_text, new_text)
+```
+
+Schema generated from the signature and docstring; `TOOL_SCHEMAS` and
+`CAPABILITY_MAP` become derived values. Same shape for commands: a dict of
+name → handler, with `:help` generated from the docstrings. One function is one
+tool. One function is one command.
+
+### 5.6 Split `app.py`
+
+887 lines covering keychain access, JEB.md discovery, a 250-line markdown merge
+engine, the console loop, ten command handlers, and the resume pager. For an
+agent reading files over a cellular link, module size is a direct cost.
+
+```
+jebmd.py           JEB.md discovery + merge (≈250 lines, and it deserves tests)
+keys.py            keychain / API key loading and migration
+console/loop.py    the loop
+console/commands.py the command registry
+context.py         a Session object holding config/provider/agent/workspace
+```
+
+The `context.py` object also kills a persistent wart: because `Provider`
+snapshots config at construction, `_apply_selection` has to *return* a new
+provider that every command handler threads back through a local variable in
+`_console_loop`. Mutable state passed by return value, through six call sites.
+A context object holds the live wiring and the handlers just mutate it.
+
+Target: no module over roughly 350 lines.
+
+### 5.7 Stop hand-maintaining three copies of the same map
+
+The package layout appears in `README.md`; "what lives where" appears in
+`docs/self_editing.md` §4; the module diagram appears in `docs/architecture.md`.
+All three are hand-written and all three must be updated together. They already
+disagree — the README lists `_jeb.py`, which does not exist (§1.3).
+
+For a self-editing agent a stale map is worse than no map, because the agent
+trusts it. Generate the tool table, the command table and the layout table from
+the registries into `docs/reference.md`, and add a test asserting that the
+checked-in file matches what the generator produces. Keep `architecture.md`
+hand-written — prose about *why* does not generate.
+
+### 5.8 Put the self-editing rules where the agent will actually see them
+
+`docs/self_editing.md` is good, and the agent only reads it if it thinks to.
+The JEB.md mechanism already injects standing instructions into the system
+prompt automatically. Ship a `miniagent/JEB.md` in the package workspace
+carrying the golden rules (inspect before editing, prefer `edit_file`, never
+weaken the runner's blocks, run the suite after changes). Then any agent booted
+against the package gets them without having to go looking.
+
+---
+
+## 6. Tests for the seams that actually broke
+
+Current coverage: `test_content`, `test_search`, `test_sessions`, `test_vision`.
+Nothing tests `Tools.dispatch`, `Permissions`, the agent loop, or command
+handling — which is precisely why §1.1 shipped.
+
+| New test | Catches |
+|---|---|
+| `test_tools.py` — dispatch every name in `TOOL_SCHEMAS` with valid args | §1.1, and any future schema/implementation drift |
+| `test_registry.py` — every schema has an implementation; every `CAPABILITY_MAP` value is in `CAPABILITIES` | wiring mistakes |
+| `test_permissions.py` — scripted prompt through all six choices plus comment parsing | policy regressions |
+| `test_agent.py` — fake provider replaying canned responses through a multi-step turn, including an interrupt | §1.4, §1.6 |
+| `test_jebmd.py` — the merge engine, once it is its own module | conflict-resolution regressions |
+
+The headless renderer from §2.2 makes the last three straightforward; today
+they would each need `builtins.input` monkeypatching.
+
+---
+
+## 7. Optional: a real Pythonista `ui` front end
+
+Once §2 lands, a `ui.View` front end is additive rather than a rewrite:
+a scrollable transcript, six actual buttons for `y/s/a/n/d/x`, a multi-line
+compose field, a tap-to-expand diff view, and a stop button that is not the
+interpreter's.
+
+Worth stating plainly: the current pure-terminal interface is defensible, and a
+GUI is not required to fix the mobile experience. §3 fixes most of the pain
+inside the terminal. Treat this as optional, and only after the terminal
+renderer has been through real use.
+
+---
+
+## 8. Order of work
+
+Sequenced so that each phase is independently useful and low-risk before the
+one structural change.
+
+| Phase | Content | Why here |
+|---|---|---|
+| **0** | §1 bug fixes. §3.1–3.3 renderer diet inside the existing `print` calls. | Largest mobile gain per line changed; zero architectural risk. Fixes two broken features. |
+| **1** | §5.2 checkpoints + compile gate. §5.1 better edit errors, `multi_edit`. | Largest self-editing gain. Makes every later phase safer to attempt from the phone. |
+| **2** | §2 event stream, UI split, headless renderer. §6 tests. | The one structural change, now with a safety net under it. |
+| **3** | §5.5 registries. §5.6 `app.py` split. §5.7 generated docs. | Cheap and mechanical once the seams exist. |
+| **4** | §4 streaming, retry, turn journal, compaction, token accounting. | Wants the event stream from phase 2. |
+| **5** | §7 `ui` front end. | Optional; decide after living with phase 3. |
+
+Phase 0 and phase 1 together are perhaps a day of work and address most of the
+daily friction in both goals. Phase 2 is the one that needs a clear head and a
+working `:undo`.
