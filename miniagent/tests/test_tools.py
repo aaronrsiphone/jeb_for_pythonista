@@ -170,6 +170,10 @@ try:
         "create_file": ({"path": "made.txt", "content": "hello\n"}, "ok"),
         "edit_file": ({"path": "edit_me.txt", "old_text": "change me",
                        "new_text": "changed"}, "ok"),
+        "multi_edit": ({"path": "notes.txt", "edits": [
+            {"old_text": "alpha", "new_text": "ALPHA"},
+            {"old_text": "gamma", "new_text": "GAMMA"},
+        ]}, "ok"),
         "overwrite_file": ({"path": "replace_me.txt",
                             "content": "brand new\n"}, "ok"),
         "clean_up": ({"paths": ["made.txt"]}, "ok"),
@@ -243,6 +247,9 @@ try:
     check("edit_file changed the file",
           (root / "edit_me.txt").read_text(encoding="utf-8"),
           "keep\nchanged\nkeep\n")
+    check("multi_edit applied both edits atomically",
+          (root / "notes.txt").read_text(encoding="utf-8"),
+          "ALPHA\nbeta needle\nGAMMA\n")
     check("overwrite_file replaced the file",
           (root / "replace_me.txt").read_text(encoding="utf-8"),
           "brand new\n")
@@ -252,8 +259,8 @@ try:
     gated_names = sorted(CAPABILITY_MAP)
     check("the gated set is the capability map",
           gated_names,
-          sorted(["ask_image", "create_file", "edit_file", "overwrite_file",
-                  "run_python"]))
+          sorted(["ask_image", "create_file", "edit_file", "multi_edit",
+                  "overwrite_file", "run_python"]))
 
     for name in gated_names:
         # A fresh policy each time, so no stored decision short-circuits it.
@@ -422,6 +429,39 @@ try:
     check("a malformed gated call is refused without prompting the user",
           [type(e).__name__ for e in run.events],
           ["ToolStarted", "ToolCompleted"])
+
+    # --- multi_edit is atomic: a failing edit leaves the file untouched ----
+
+    m_root, _, m_tools, _ = fresh_tools("multi")
+    before_bytes = (m_root / "edit_me.txt").read_bytes()
+    run = dispatch(m_tools, "multi_edit", {
+        "path": "edit_me.txt",
+        "edits": [
+            {"old_text": "change me", "new_text": "changed"},
+            {"old_text": "does not exist anywhere", "new_text": "x"},
+        ],
+    }, answers=["a"])
+    check("a multi_edit with a failing edit reports an error", run.status, "error")
+    check("the error names the failing edit's index",
+          "edit #2" in run.payload.get("error", ""), True)
+    check("multi_edit leaves the file byte-identical on failure",
+          (m_root / "edit_me.txt").read_bytes(), before_bytes)
+
+    # Each edit sees the running (already-edited) text: the second edit here
+    # only becomes unique because the first one already ran.
+    run = dispatch(m_tools, "multi_edit", {
+        "path": "edit_me.txt",
+        "edits": [
+            {"old_text": "change me", "new_text": "changed"},
+            {"old_text": "changed\nkeep", "new_text": "changed\nKEPT"},
+        ],
+    })
+    check("a successful multi_edit applies every edit in order",
+          (m_root / "edit_me.txt").read_text(encoding="utf-8"),
+          "keep\nchanged\nKEPT\n")
+    check("multi_edit reports how many edits and replacements were applied",
+          (run.payload.get("edits_applied"), run.payload.get("replacements")),
+          (2, 2))
 
 finally:
     for path in tmp_roots:

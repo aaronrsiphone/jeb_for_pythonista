@@ -34,6 +34,7 @@ from .workspace import Workspace, WorkspaceError
 CAPABILITY_MAP = {
     "create_file": _perm.WRITE,
     "edit_file": _perm.EDIT,
+    "multi_edit": _perm.EDIT,
     "overwrite_file": _perm.OVERWRITE,
     "run_python": _perm.RUN_PYTHON,
     "ask_image": _perm.ASK_IMAGE,
@@ -153,8 +154,14 @@ TOOL_SCHEMAS = [
         "function": {
             "name": "edit_file",
             "description": (
-                "Replace exactly one unique text occurrence in an existing file. "
-                "Fails if old_text is absent or occurs more than once."
+                "Replace text in an existing file. By default old_text must "
+                "occur exactly once; a non-unique match reports every "
+                "occurrence's line number instead of just failing, and no "
+                "match reports the closest-matching region of the file with "
+                "a diff of what differs. Set replace_all=true to replace "
+                "every occurrence, or occurrence=<1-based index> to pick "
+                "one specific occurrence (mutually exclusive with "
+                "replace_all)."
             ),
             "parameters": {
                 "type": "object",
@@ -162,8 +169,54 @@ TOOL_SCHEMAS = [
                     "path": {"type": "string"},
                     "old_text": {"type": "string"},
                     "new_text": {"type": "string"},
+                    "replace_all": {
+                        "type": "boolean",
+                        "default": False,
+                        "description": "Replace every occurrence of old_text.",
+                    },
+                    "occurrence": {
+                        "type": "integer",
+                        "description": (
+                            "Replace only the Nth (1-based) occurrence of "
+                            "old_text. Mutually exclusive with replace_all."
+                        ),
+                    },
                 },
                 "required": ["path", "old_text", "new_text"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "multi_edit",
+            "description": (
+                "Apply a list of {old_text, new_text} edits to one existing "
+                "file atomically: either every edit applies (each old_text "
+                "must be a unique match in the file's content at the point "
+                "it is applied, in order) or the file is left completely "
+                "untouched and the error names which edit failed and why. "
+                "One permission prompt covers the whole change instead of "
+                "one per edit."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "path": {"type": "string"},
+                    "edits": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "old_text": {"type": "string"},
+                                "new_text": {"type": "string"},
+                            },
+                            "required": ["old_text", "new_text"],
+                        },
+                        "description": "Edits applied in order to the same file.",
+                    },
+                },
+                "required": ["path", "edits"],
             },
         },
     },
@@ -495,9 +548,17 @@ class Tools:
             if name == "edit_file":
                 relative = args.get("path", "")
                 preview = self.workspace.preview_edit(
-                    relative, args.get("old_text", ""), args.get("new_text", "")
+                    relative, args.get("old_text", ""), args.get("new_text", ""),
+                    replace_all=bool(args.get("replace_all", False)),
+                    occurrence=args.get("occurrence"),
                 )
                 return "EDIT FILE", preview
+
+            if name == "multi_edit":
+                relative = args.get("path", "")
+                edits = args.get("edits") or []
+                preview = self.workspace.preview_multi_edit(relative, edits)
+                return "MULTI EDIT", f"{relative}\n\n{preview}"
 
             if name == "overwrite_file":
                 relative = args.get("path", "")
@@ -614,8 +675,13 @@ class Tools:
 
         if name == "edit_file":
             return self.workspace.edit_file(
-                args["path"], args["old_text"], args["new_text"]
+                args["path"], args["old_text"], args["new_text"],
+                replace_all=bool(args.get("replace_all", False)),
+                occurrence=args.get("occurrence"),
             )
+
+        if name == "multi_edit":
+            return self.workspace.multi_edit(args["path"], args.get("edits"))
 
         if name == "overwrite_file":
             return self.workspace.overwrite_file(args["path"], args.get("content", ""))
