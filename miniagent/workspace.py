@@ -19,7 +19,7 @@ _SEARCH_LINE_CLIP = 300
 _SEARCH_DEFAULT_MAX_RESULTS = 200
 
 # Name of the recoverable trash folder that clean_up moves files into.
-TRASH_DIRNAME = ".to_delete"
+TRASH_DIRNAME = "to_delete"
 
 
 class WorkspaceError(Exception):
@@ -41,7 +41,7 @@ class Workspace:
         if not self.root.is_dir():
             raise WorkspaceError(f"Project root is not a directory: {self.root}")
 
-    # -- path handling ------------------------------------------------------
+    # -- path handling -----------------------------
 
     def resolve(self, path: str) -> Path:
         """Resolve *path* against the workspace root and confine it.
@@ -72,7 +72,7 @@ class Workspace:
         except ValueError:
             return str(path)
 
-    # -- file operations ----------------------------------------------------
+    # -- file operations ---------------------------
 
     def list_files(self, path: str = ".", recursive: bool = False, max_depth=None):
         root = self.resolve(path)
@@ -257,24 +257,24 @@ class Workspace:
             "diff": _unified_diff(old, content, self.rel(full)),
         }
 
-    # -- clean-up (recoverable trash) ---------------------------------------
+    # -- clean-up (recoverable trash) --------------
 
     def trash_dir(self) -> Path:
         """The workspace folder where ``clean_up`` parks removed files."""
         return self.root / TRASH_DIRNAME
 
     def clean_up(self, path: str):
-        """Move the file at *path* into the workspace ``.to_delete`` folder.
+        """Move the file at *path* into the workspace ``to_delete`` folder.
 
         Nothing is deleted: the file is moved under a collision-free name
         (``name-1.ext``, ``name-2.ext``, ...) so it can be inspected or
-        restored before the folder is emptied.  Paths inside ``.to_delete``
+        restored before the folder is emptied.  Paths inside ``to_delete``
         itself are refused.
         """
         full = self.resolve(path)
         trash = self.trash_dir()
         if full == trash or trash in full.parents:
-            raise WorkspaceError("Refusing to clean up: path is inside .to_delete")
+            raise WorkspaceError("Refusing to clean up: path is inside to_delete")
         if not full.exists():
             raise WorkspaceError(f"File does not exist: {path}")
         if not full.is_file():
@@ -284,7 +284,7 @@ class Workspace:
         os.replace(str(full), str(target))
         return {"ok": True, "path": self.rel(full), "moved_to": self.rel(target)}
 
-    # -- preview helpers (no mutation) -------------------------------------
+    # -- preview helpers (no mutation) -------------
 
     def preview_edit(self, path: str, old_text: str, new_text: str):
         full = self.resolve(path)
@@ -294,16 +294,16 @@ class Workspace:
         if text.count(old_text) != 1:
             return f"(old_text occurs {text.count(old_text)} time(s); no unique match)"
         updated = text.replace(old_text, new_text, 1)
-        return _unified_diff(text, updated, self.rel(full))
+        return _diff_preview(text, updated, self.rel(full))
 
     def preview_overwrite(self, path: str, content: str):
         full = self.resolve(path)
         if not full.exists() or not full.is_file():
             return f"(cannot preview: {path})"
         old = full.read_text(encoding="utf-8")
-        return _unified_diff(old, content, self.rel(full))
+        return _diff_preview(old, content, self.rel(full))
 
-    # -- internals ----------------------------------------------------------
+    # -- internals ---------------------------------
 
     @staticmethod
     def _atomic_write(path: Path, content: str):
@@ -352,6 +352,38 @@ def _unified_diff(old: str, new: str, label: str, max_lines: int = 400) -> str:
             out.append("...(diff truncated)...\n")
             break
     return "".join(out) or "(no changes)"
+
+
+def _diff_stat(old: str, new: str) -> str:
+    """Return a short summary like ``"+6 -2"`` for the change from *old* to *new*."""
+    import difflib
+
+    added = 0
+    removed = 0
+    for line in difflib.unified_diff(
+        old.splitlines(keepends=True),
+        new.splitlines(keepends=True),
+    ):
+        if line.startswith("+++") or line.startswith("---"):
+            continue
+        if line.startswith("+"):
+            added += 1
+        elif line.startswith("-"):
+            removed += 1
+    return f"+{added} -{removed}"
+
+
+def _diff_preview(old: str, new: str, label: str, max_lines: int = 60) -> str:
+    """Return a human-facing preview: a stat-line header, then a capped diff.
+
+    Used only by ``preview_edit``/``preview_overwrite`` for the permission
+    prompt shown to the human; never sent to the model.
+    """
+    diff_text = _unified_diff(old, new, label, max_lines=max_lines)
+    stat = _diff_stat(old, new)
+    hunks = sum(1 for line in diff_text.splitlines() if line.startswith("@@"))
+    header = f"{label}   {stat}   ({hunks} hunk(s))"
+    return f"{header}\n\n{diff_text}"
 
 
 def _compile_search_matcher(pattern, case_sensitive, regex):

@@ -9,35 +9,46 @@ preferences that persist across every turn of every session.
 ## How it works
 
 When MiniAgent starts (when `run()` is called), it looks for `JEB.md` files
-in two locations:
+in three locations:
 
 | Order | Scope | Location | Purpose |
 |-------|-------|----------|---------|
-| 1 | Global | `~/miniagent/JEB.md` (in your home folder) | Instructions that apply to every project on this install. |
-| 2 | Local | `<workspace>/JEB.md` (next to the launcher / in the project root) | Instructions specific to the current project. |
+| 1 | Global (Documents version) | `~/Documents/miniagent/JEB.md` | Preferred global location — instructions that apply to every project on this install. |
+| 2 | Global (original) | `~/miniagent/JEB.md` (in your home folder) | Legacy global location, kept for backward compatibility. |
+| 3 | Local | `<workspace>/JEB.md` (next to the launcher / in the project root) | Instructions specific to the current project. |
 
-The contents are concatenated in that order — **global first, local second** —
-and appended to the end of the system prompt, after the standard environment
-constraints and coding behavior rules.
+The contents are combined — **global first, local second** — and appended
+to the end of the system prompt, after the standard environment
+constraints and coding behavior rules. When both global files exist they
+are merged into a single section first (see
+[Merging the two global files](#merging-the-two-global-files) below), with
+conflicts resolved in favour of the Documents version.
 
-If neither file exists, nothing is added and the system prompt is unchanged.
-If only one exists, only that one is used. There is no error or warning when
-a file is absent — this is the normal case.
+If no file exists, nothing is added and the system prompt is unchanged.
+Missing files are silently skipped — this is the normal case.
 
 ## Where to put each file
 
 ### Global `JEB.md`
 
-Place this file in a `miniagent/` folder in your home directory:
+Place this file in a `miniagent/` folder inside your Documents folder:
 
 ```
-~/miniagent/JEB.md
+~/Documents/miniagent/JEB.md
 ```
 
 The global file is discovered at runtime via
-`Path.home() / "miniagent" / "JEB.md"`. Keeping it in your home folder —
-rather than inside the installed `site-packages/miniagent` package — means
-it survives reinstalls and updates of the miniagent module.
+`Path.home() / "Documents" / "miniagent" / "JEB.md"`. On Pythonista/iOS this
+is the user-visible Documents folder (available in the Files app), and —
+like the legacy location — it lives outside the installed
+`site-packages/miniagent` package, so it survives reinstalls and updates of
+the miniagent module.
+
+An older copy in `~/miniagent/JEB.md` is still read for backward
+compatibility. When both files exist they are merged (see
+[Merging the two global files](#merging-the-two-global-files)) rather than
+concatenated, so the model never receives two conflicting sets of global
+instructions.
 
 Use this for install-wide preferences like:
 
@@ -65,20 +76,47 @@ Use this for project-specific context like:
 - Conventions specific to this codebase.
 - A list of files the agent should not touch.
 
+## Merging the two global files
+
+When both `~/Documents/miniagent/JEB.md` (the **Documents version**) and
+`~/miniagent/JEB.md` (the **original**) exist, MiniAgent merges them into
+one section instead of concatenating them, so you can keep an editable copy
+in Documents without the model ever seeing two contradictory sets of global
+instructions. The merge is deterministic:
+
+1. **The Documents version wins conflicts.** Both files are split into
+   sections by markdown heading and into *units* (a list item, including
+   its continuation lines, or a block of text).
+2. A unit present in both files (ignoring case and whitespace) is kept
+   once.
+3. A unit in the original that closely resembles a unit in the Documents
+   version (text similarity of at least 85%) is treated as a *conflicting
+   version of the same instruction*: the Documents version is kept and the
+   original's version is dropped. The `:context` command reports every
+   conflict resolved this way.
+4. Everything else from the original is kept — sections unique to it are
+   appended after the Documents sections, and units unique to it are
+   appended within their own section.
+
+If only one global file exists it is used as-is, so existing installs
+that only have `~/miniagent/JEB.md` keep working unchanged.
+
 ## What the model sees
 
-When one or both `JEB.md` files are present, the system prompt gets a section
+When one or more `JEB.md` files are present, the system prompt gets a section
 appended that looks like:
 
 ```
 Additional context from JEB.md files is provided below.
-Global instructions (from ~/miniagent) appear first, followed by
-project-local instructions (from the workspace). Treat these as standing
-instructions that augment the rules above.
+Global instructions come first: the Documents version
+(~/Documents/miniagent/JEB.md) merged with any original copy
+(~/miniagent/JEB.md), with conflicts resolved in favour of the
+Documents version. Project-local instructions (from the workspace) follow.
+Treat these as standing instructions that augment the rules above.
 
-# Global JEB.md (~/miniagent)
+# Global JEB.md (~/Documents/miniagent merged with ~/miniagent)
 
-<contents of ~/miniagent/JEB.md>
+<merged contents of the two global files>
 
 ---
 
@@ -87,10 +125,13 @@ instructions that augment the rules above.
 <contents of <workspace>/JEB.md>
 ```
 
-The two sections are separated by a horizontal rule (`---`) and labelled so
-the model can distinguish global from local instructions. The standard
-constraints (no shell, workspace confinement, termination blocking, etc.)
-always come **before** the JEB.md content and are never overridden by it.
+The sections are separated by a horizontal rule (`---`) and labelled so the
+model can distinguish global from local instructions. The global section's
+label reflects which files were found — for example
+`# Global JEB.md (~/Documents/miniagent)` when only the Documents version
+exists. The standard constraints (no shell, workspace confinement,
+termination blocking, etc.) always come **before** the JEB.md content and
+are never overridden by it.
 
 ## Checking what was loaded
 
@@ -101,8 +142,10 @@ the combined context that was added to the system prompt:
 You> :context
 ```
 
-This prints the global path (if found), the local path (if found), and the
-full combined text. If neither file exists it prints:
+This prints every candidate path with a `found`/`missing` marker (both
+global locations plus the local one), any conflicts that were resolved in
+favour of the Documents version, and the full combined text. If no file
+exists it prints:
 
 ```
 No JEB.md files found (global or local).
@@ -117,7 +160,7 @@ documentation files (via `read_file`) from within your `JEB.md`.
 
 ## Editing JEB.md
 
-Both files are plain UTF-8 Markdown. You can create and edit them with any
+All of them are plain UTF-8 Markdown. You can create and edit them with any
 text editor, or — since the local file lives inside the workspace — the agent
 itself can create and edit it using `create_file` / `edit_file` (subject to
 the normal `write` / `edit` permissions).

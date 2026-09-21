@@ -41,8 +41,14 @@ site-packages/
         permissions.py
         provider.py
         runner.py
+        sessions.py
         tools.py
+        vision.py
         workspace.py
+        tests/
+            __init__.py
+            run_all.py
+            test_*.py
 ```
 
 You can do this with Pythonista's own file browser (drag the `miniagent`
@@ -60,6 +66,10 @@ print(run)
 ```
 
 If both lines print without error, the package is importable and ready.
+To also confirm behavior end to end, run the bundled test suite
+(`miniagent/tests/run_all.py`) — every test is self-contained, needs no
+network, and writes only to throwaway directories under the system temp
+folder.
 
 ## 4. Use it in any project
 
@@ -84,6 +94,20 @@ if __name__ == "__main__":
 Running `jeb.py` starts an interactive MiniAgent console scoped to
 `SomeProject/`.
 
+Alternatively, copy `miniagent/_jeb.py` from the installed package to
+`jeb.py` in your project instead of typing it out:
+
+```
+cp <site-packages>/miniagent/_jeb.py <project>/jeb.py
+```
+
+(replace `<site-packages>` with the directory from step 1, and `<project>`
+with your project directory). This is the exact same snippet shown above,
+saved as a template inside the package so you don't have to retype it —
+handy if you're scripting the setup. If you installed via the Files app or
+Pythonista's own file browser, hand-typing the snippet above (or copying it
+with the file browser) may be more convenient than a shell `cp`.
+
 ## Where MiniAgent stores its own state
 
 MiniAgent keeps its configuration and permission policy **outside** your
@@ -93,9 +117,12 @@ projects, in an application-state directory derived at runtime.  It prefers:
 ~/Documents/miniagent/
     config.json
     permissions.json
+    sessions/
 ```
 
-falling back to `~/.miniagent/` and then a temp directory.  The API key is
+falling back to `~/.miniagent/` and then a temp directory.  `sessions/`
+holds the recorded conversation logs (`:resume`) for every workspace, one
+JSONL file per session.  The API key is
 stored in the Pythonista keychain, never in a JSON file.  You can set it from
 the MiniAgent console with:
 

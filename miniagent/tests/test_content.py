@@ -1,8 +1,9 @@
-"""Scratch self-test for Provider.split_content and agent display handling.
+"""Tests for Provider.split_content and agent display handling.
 
 Safe to run via run_python: no network, no file writes, no console loop.
 It re-imports the miniagent package fresh so it exercises the CURRENT source
-files, then simulates agent turns with a fake provider. Delete when done.
+files, then simulates agent turns with a fake provider. Lives permanently in
+miniagent/tests/; run it directly or through run_all.py.
 """
 
 import io
@@ -17,7 +18,9 @@ for name in [n for n in list(sys.modules)
              if n == "miniagent" or n.startswith("miniagent.")]:
     del sys.modules[name]
 
-parent = Path(__file__).resolve().parent.parent
+# The tests live in miniagent/tests/, so the importable package root (the
+# site-packages directory containing miniagent/) is three levels up.
+parent = Path(__file__).resolve().parent.parent.parent
 if str(parent) not in sys.path:
     sys.path.insert(0, str(parent))
 
@@ -136,7 +139,7 @@ def run_turn(message):
 # Scenario 1: the bug — content is a list with only a thinking block.
 agent, out, result = run_turn({"role": "assistant", "content": bug_shape})
 check("S1 reasoning printed as text",
-      "Reasoning:\nThe user sent" in out, True)
+      "· The user sent" in out, True)
 check("S1 no raw json dump", "'type': 'thinking'" not in out, True)
 check("S1 no Assistant header (no text part)", "Assistant:" not in out, True)
 check("S1 turn returns placeholder", result, "(no response)")
@@ -146,9 +149,9 @@ check("S1 last_assistant_text is str", agent.last_assistant_text(), "")
 
 # Scenario 2: thinking block + text block in the same content list.
 agent, out, result = run_turn({"role": "assistant", "content": mixed_shape})
-check("S2 reasoning printed", "Reasoning:" in out, True)
+check("S2 reasoning printed", "· The user sent" in out, True)
 check("S2 assistant text printed",
-      "Assistant:\nHere is the overview." in out, True)
+      "Here is the overview." in out, True)
 check("S2 turn returns text part", result, "Here is the overview.")
 check("S2 last_assistant_text", agent.last_assistant_text(),
       "Here is the overview.")
@@ -160,8 +163,8 @@ agent, out, result = run_turn(
      "reasoning_content": "chain of thought"}
 )
 check("S3 reasoning_content printed",
-      "Reasoning:\nchain of thought" in out, True)
-check("S3 text printed", "Assistant:\nAnswer!" in out, True)
+      "· chain of thought" in out, True)
+check("S3 text printed", "Answer!" in out, True)
 check("S3 turn returns text", result, "Answer!")
 
 # Scenario 4: tool call whose message also carries block content — the
@@ -188,5 +191,5 @@ check("S4 no raw json dump", "'type': 'thinking'" not in out, True)
 print()
 if failures:
     print(f"{len(failures)} FAILURE(S): {failures}")
-else:
-    print("All checks passed.")
+    raise AssertionError(f"{len(failures)} content test check(s) failed")
+print("All checks passed.")

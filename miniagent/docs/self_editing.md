@@ -44,6 +44,7 @@ Start with the entry point and follow the call graph:
 | 7 | `permissions.py` | How authorization decisions are made and stored. |
 | 8 | `provider.py` | How HTTP requests are built and sent. |
 | 9 | `config.py` | How settings are loaded, saved, and migrated. |
+| 10 | `sessions.py` | How conversations are recorded to JSONL logs and resumed (`:resume`). |
 
 Use `list_files` with `recursive=true` to see the full tree, and
 `read_file` with `start_line` / `end_line` for large files.
@@ -100,7 +101,11 @@ console loop catches.
 If you have permission, you can `run_python` a changed file to validate it.
 Do this when it is genuinely useful (e.g. checking a syntax error or a
 logic path). Do not run code that imports `miniagent` and starts the console
-loop — that would nest an agent inside the agent.
+loop — that would nest an agent inside the agent. Validation scripts must
+never read interactive input: under `run_python`, `input()` and `sys.stdin`
+fail fast with `InteractiveInputBlocked`. When testing prompt-driven code
+(e.g. the permission layer), inject a scripted prompt instead — see
+[`testing.md`](testing.md).
 
 ### Rule 8 — Recover from tool errors
 
@@ -139,25 +144,36 @@ explanation accurate so the model understands what the section is.
 ### Change JEB.md discovery
 
 The JEB.md lookup lives in `app.py` (`load_jeb_md_context`,
-`_read_jeb_md`, `_global_jeb_md_path`). It checks the global path
-(`~/miniagent/JEB.md`) first and the workspace-local path second. The
-`:context` command (`_print_jeb_context`) shows the user what was loaded.
-See [`jeb_md.md`](jeb_md.md) for the user-facing description.
+`_read_jeb_md`, `_global_jeb_md_paths`, `_merge_global_jeb_md_texts`). It
+checks the global Documents version (`~/Documents/miniagent/JEB.md`)
+first, merges it with the original (`~/miniagent/JEB.md`) when both
+exist — conflicts are resolved in favour of the Documents version — and
+appends the workspace-local path second. The `:context` command
+(`_print_jeb_context`) shows the user what was loaded and which conflicts
+were resolved. See [`jeb_md.md`](jeb_md.md) for the user-facing
+description.
 
 ### Change how a tool result is formatted
 
 Tool results are JSON strings built by `_result()` at the bottom of
 `tools.py`. The truncation limit is `_RESULT_LIMIT`. The agent loop in
 `agent.py` inspects the JSON for `ok`, `denied`, `blocked`, and `error` keys
-to print a status line. If you change the result shape, make sure the status
-detection in `agent.py` still makes sense.
+to print a status line, and prints a trailing `user_comment` (the note the
+user attached to their permission answer) alongside it when present. If you
+change the result shape, make sure the status detection in `agent.py` still
+makes sense.
 
 ### Change the permission prompt
 
 The prompt text and the choice mapping live in `Permissions._ask()` in
 `permissions.py`. The six choices (`y/s/a/n/d/x`) map to internal tokens
 defined at the top of the file. If you add or remove a choice, update
-`_apply()` and `_ask()` together.
+`_CHOICE_MAP`, `_parse_choice()`, `_apply()` and `_ask()` together. Any
+choice may be followed by a comment for the agent (e.g. `"n. Use another
+path"`); `_parse_choice()` splits letter from comment and `_ask()` returns
+them as a `(decision, comment)` tuple, which `authorize_with_comment()`
+passes through to `Tools.dispatch()` for relaying to the model as
+`user_comment`.
 
 ### Change the console commands
 
@@ -194,6 +210,7 @@ own permissions.
 | Which tools exist and their schemas | `tools.py` (`TOOL_SCHEMAS`) |
 | Which tools need permission | `tools.py` (`CAPABILITY_MAP`) |
 | What a tool actually does | `tools.py` (`_execute`) and possibly `workspace.py` or `runner.py` |
+| Image questions (the `ask_image` tool) | `vision.py` (the collaborator), wired in `tools.py` (`_ask_image`) and constructed in `app.py` (`run`) |
 | File confinement / atomic writes | `workspace.py` |
 | Python execution and termination blocking | `runner.py` |
 | Permission prompt text and choices | `permissions.py` |
@@ -202,6 +219,8 @@ own permissions.
 | Provider settings (defaults, save/load) | `config.py` |
 | First-run setup and legacy migration | `config.py` |
 | Where state/config/permissions are stored | `config.py` (`default_state_dir`) and `app.py` (keychain service) |
+| Session recording and `:resume` | `sessions.py` (`SessionLogger`, `repair_messages`), wired through `agent.py` (`recorder`, `restore`) and `app.py` (`_resume_command`) |
+| The test suite (`miniagent/tests/`) | the `test_*.py` files plus `run_all.py`; conventions in [`testing.md`](testing.md) |
 | Console commands | `app.py` (`_console_loop`, `_print_help`) |
 | The example launcher | `_jeb.py` |
 
@@ -219,7 +238,18 @@ print("version:", miniagent.__version__)
 ```
 
 This does not start the agent loop and does not touch the network. It only
-exercises the import graph. Clean it up or leave it — your call.
+exercises the import graph.
+
+For real validation, use the permanent test suite in `miniagent/tests/`: run
+one file with `run_python miniagent/tests/test_<name>.py`, or everything
+with `run_python miniagent/tests/run_all.py`. When your change needs a new
+test, add it there (or extend an existing file) rather than creating a
+scratch test to delete afterwards — see the conventions in
+[`testing.md`](testing.md). For anything that touches the permission layer,
+the runner, or other prompt-driven code, read [`testing.md`](testing.md)
+first: it explains how to script prompts and stub `builtins.input` so a test
+can never block on an invisible prompt, and documents the
+`InteractiveInputBlocked` fail-fast behavior the runner now guarantees.
 
 ## 6. What not to do
 
@@ -232,7 +262,9 @@ exercises the import graph. Clean it up or leave it — your call.
   `workspace.py:resolve()`.
 - **Do not** start a nested `run()` call inside the running agent. You will
   hijack the console loop.
-
+- **Do not** write tests that call `input()` or read `sys.stdin` — under
+  `run_python` they fail fast with `InteractiveInputBlocked` by design.
+  Inject a scripted prompt instead ([`testing.md`](testing.md)).
 ## 7. After you finish
 
 When you are done with your changes:
