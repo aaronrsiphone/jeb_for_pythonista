@@ -25,6 +25,8 @@ parent = Path(__file__).resolve().parent.parent.parent
 if str(parent) not in sys.path:
     sys.path.insert(0, str(parent))
 
+from miniagent.events import PermissionAnswer, PermissionNeeded  # noqa: E402
+from miniagent.permissions import Permissions  # noqa: E402
 from miniagent.tools import CAPABILITY_MAP, TOOL_SCHEMAS, Tools  # noqa: E402
 from miniagent.workspace import (  # noqa: E402
     Workspace,
@@ -41,6 +43,34 @@ def check(name, got, want):
     else:
         failures.append(name)
         print(f"FAIL: {name}\n  got : {got!r}\n  want: {want!r}")
+
+
+def run_dispatch(tools, call, answer=None):
+    """Run a dispatch generator to completion and return its result string.
+
+    ``Tools.dispatch`` is a generator: it yields the tool-call lifecycle
+    events and *returns* the JSON payload for the model.  Informational
+    events are answered with ``None``; a
+    :class:`~miniagent.events.PermissionNeeded` gets *answer* (which a
+    caller supplies as a raw typed string, parsed the way a front end parses
+    a keystroke).  ``search_files`` is ungated, so nothing here asks — the
+    branch exists so the helper is honest about the protocol.
+    """
+    gen = tools.dispatch(call)
+    to_send = None
+    while True:
+        try:
+            event = gen.send(to_send)
+        except StopIteration as stop:
+            return stop.value
+        if isinstance(event, PermissionNeeded):
+            to_send = (
+                answer if isinstance(answer, PermissionAnswer)
+                else Permissions.parse_answer(answer) if answer is not None
+                else None
+            )
+        else:
+            to_send = None
 
 
 # --- fixture -------------------------------------------------------------
@@ -177,7 +207,7 @@ try:
             "arguments": json.dumps({"pattern": "search me", "path": "sub"}),
         },
     }
-    parsed = json.loads(tools.dispatch(call))
+    parsed = json.loads(run_dispatch(tools, call))
     check("dispatch returns matches", len(parsed["matches"]), 1)
     check("dispatch match detail", parsed["matches"][0],
           {"path": "sub/beta.md", "line": 2, "text": "search me maybe"})
@@ -187,7 +217,7 @@ try:
         "id": "call_search_2",
         "function": {"name": "search_files", "arguments": "{}"},
     }
-    parsed = json.loads(tools.dispatch(call_bad))
+    parsed = json.loads(run_dispatch(tools, call_bad))
     check("missing pattern gives clean error", parsed.get("ok", False), False)
     check("error mentions pattern",
           "pattern" in parsed.get("error", "").lower(), True)

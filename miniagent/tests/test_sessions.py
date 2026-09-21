@@ -3,9 +3,12 @@
 Safe to run via run_python: no network, no console loop, and no writes
 outside the system temp directory — the real ~/Documents/miniagent is never
 touched because every SessionLogger is pointed at a throwaway state dir.
-The one interactive path exercised here (:resume's picker) is driven through
-a scripted builtins.input queue, per docs/testing.md. Lives permanently in
-miniagent/tests/; run it directly or through run_all.py.
+Agent turns are driven headlessly (miniagent.ui.drive + Headless): the agent
+is a generator of events and prints nothing, so no stdout capture or input
+stubbing is involved in recording a turn. The one remaining interactive path
+exercised here is :resume's picker in app.py, which still reads its selection
+with input() and is therefore driven through a scripted builtins.input queue.
+Lives permanently in miniagent/tests/; run it directly or through run_all.py.
 """
 
 import builtins
@@ -32,12 +35,15 @@ if str(parent) not in sys.path:
 
 from miniagent import app as ma_app  # noqa: E402
 from miniagent.agent import Agent  # noqa: E402
+from miniagent.events import ToolCompleted, ToolStarted  # noqa: E402
 from miniagent.sessions import (  # noqa: E402
     SessionError,
     SessionLogger,
     repair_messages,
     workspace_key,
 )
+from miniagent.ui import drive  # noqa: E402
+from miniagent.ui.headless import Headless  # noqa: E402
 
 failures = []
 
@@ -66,14 +72,30 @@ class FakeProvider:
 
 
 class FakeTools:
+    """Dispatcher stub matching the generator contract of Tools.dispatch.
+
+    It yields the lifecycle events and *returns* the JSON string the model
+    sees, so the agent's ``result = yield from tools.dispatch(call)`` works
+    against it unchanged.
+    """
+
     schemas = []
 
     def dispatch(self, call):
-        return json.dumps({"ok": True, "value": 1})
+        name = call.get("function", {}).get("name", "")
+        outcome = {"ok": True, "value": 1}
+        yield ToolStarted(name, {})
+        yield ToolCompleted(name, "ok", "", outcome)
+        return json.dumps(outcome)
 
 
 class ScriptedInput:
-    """Answers a queue of scripted input() responses; raises when exhausted."""
+    """Answers a queue of scripted input() responses; raises when exhausted.
+
+    Only the :resume picker needs this: it is the last prompt in the code
+    base that still reads from builtins.input.  Permission prompts are
+    events now and are answered through the headless renderer instead.
+    """
 
     def __init__(self, answers):
         self.answers = list(answers)
@@ -88,6 +110,8 @@ class ScriptedInput:
 
 
 class EOFInput:
+    """input() stub that raises EOFError, for the picker's cancel path."""
+
     def __call__(self, prompt=""):
         raise EOFError
 
@@ -304,8 +328,15 @@ try:
         {"role": "assistant", "content": "I listed the files."},
     ])
     agent = Agent(provider, FakeTools(), "sysprompt", recorder=agent_logger)
-    with contextlib.redirect_stdout(io.StringIO()):
-        agent.turn("list the files please")
+    # Turns are driven headlessly: the agent is a generator of events now, so
+    # drive() pumps it and the renderer records what it emitted.  Nothing is
+    # printed, so no stdout redirection is needed here.
+    turn_events = Headless()
+    turn_text = drive(agent, "list the files please", turn_events)
+    check("turn returned the final reply", turn_text, "I listed the files.")
+    check("turn emitted the tool lifecycle",
+          [type(e).__name__ for e in turn_events.events],
+          ["ToolStarted", "ToolCompleted", "AssistantText", "TurnEnded"])
 
     check("agent history roles",
           [m["role"] for m in agent.messages],
@@ -320,12 +351,11 @@ try:
               and o.get("message", {}).get("role") == "system"
               for o in recorded), False)
 
-    with contextlib.redirect_stdout(io.StringIO()):
-        agent.reset()
+    agent.reset()
     check("reset rotates the recorder", agent_logger.active_id, None)
     agent.provider = FakeProvider([{"role": "assistant", "content": "fresh"}])
-    with contextlib.redirect_stdout(io.StringIO()):
-        agent.turn("new conversation")
+    check("post-reset turn returns its reply",
+          drive(agent, "new conversation", Headless()), "fresh")
     check("post-reset turn starts a new file",
           agent_logger.active_id != agent_sid, True)
     check("both segments listed", len(agent_logger.list_sessions()), 2)

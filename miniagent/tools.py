@@ -41,6 +41,22 @@ CAPABILITY_MAP = {
 
 _RESULT_LIMIT = 40000
 
+
+def _required_args() -> dict:
+    """Map each tool name to the argument names its schema marks required.
+
+    Derived from ``TOOL_SCHEMAS`` rather than hand-maintained, so a tool
+    cannot declare a required argument and then fail to enforce it.
+    """
+    out = {}
+    for schema in TOOL_SCHEMAS:
+        function = schema.get("function", {}) or {}
+        params = function.get("parameters", {}) or {}
+        required = params.get("required") or []
+        if required:
+            out[function.get("name", "")] = tuple(required)
+    return out
+
 TOOL_SCHEMAS = [
     {
         "type": "function",
@@ -342,6 +358,10 @@ TOOL_SCHEMAS = [
 ]
 
 
+# Built once from the schemas above; see _required_args().
+REQUIRED_ARGS = _required_args()
+
+
 class Tools:
     """Holds tool implementations and centralised permission gating."""
 
@@ -398,6 +418,25 @@ class Tools:
             return _result(outcome)
 
         yield ToolStarted(name, args)
+
+        # Required-argument gate.  The schemas already declare what each tool
+        # needs, so enforce it here instead of letting _execute() raise a bare
+        # KeyError that reaches the model as "Unexpected error in 'read_file':
+        # 'path'" — a message it cannot act on, and one indistinguishable from
+        # a genuine harness fault.  Checked before the permission gate so a
+        # malformed call never becomes a question for the user.
+        missing = [key for key in REQUIRED_ARGS.get(name, ())
+                   if args.get(key) is None]
+        if missing:
+            outcome = {
+                "ok": False,
+                "error": (
+                    f"{name} requires the argument(s) "
+                    + ", ".join(repr(k) for k in missing)
+                ),
+            }
+            yield ToolCompleted(name, "error", "", outcome)
+            return _result(outcome)
 
         cap = CAPABILITY_MAP.get(name)
         user_comment = ""
