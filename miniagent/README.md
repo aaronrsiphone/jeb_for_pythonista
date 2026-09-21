@@ -126,89 +126,98 @@ segment stays separately resumable.
 
 ## Console commands
 
-| Command | Purpose |
-|---------|---------|
-| `:help` | Show available commands |
-| `:reset` | Reset the conversation to the system prompt |
-| `:config` | Print current configuration |
-| `:config set KEY VALUE` | Set and save a config value |
-| `:key` | Show whether an API key is stored |
-| `:key set VALUE` | Store the API key in the keychain |
-| `:model [NUMBER]` | List configured models as `<provider>/<model-name>` and select one for this session |
-| `:effort [low\|medium\|high\|xhigh\|max]` | Set reasoning effort level |
-| `:perms` | Show permission state |
-| `:clear-perms` | Clear session and persistent permissions |
-| `:files` | List top-level project files |
-| `:workspace` | Print the project workspace path |
-| `:context` | Show JEB.md files found and the combined context loaded |
-| `:resume` | List recorded sessions (4 per page) and reinstate one to continue it |
-| `:quit` | Stop MiniAgent |
-
-Anything that is not a command is sent to the agent as a prompt.
+The full, generated list of every command — including aliases and a
+one-line summary of each — is in [`docs/reference.md`](docs/reference.md),
+produced straight from the command registry so it can never omit or
+misdescribe one. Highlights: `:help` lists everything at the console;
+`:resume` browses and continues a past session; `:undo` and `:checkpoints`
+are the self-editing safety net (see below); `:verbose` switches between the
+compact and expanded console renderers; anything not starting with `:` is
+sent to the agent as a prompt.
 
 ## Tools the agent has
 
-| Tool | Permission | Description |
-|------|------------|-------------|
-| `list_files` | none | List files and directories (recursive option) |
-| `read_file` | none | Read a UTF-8 text file with line numbers and optional range |
-| `search_files` | none | Search file contents for a literal or regex pattern; returns matches with path and line number |
-| `create_file` | write | Create a new file; fails if it already exists |
-| `edit_file` | edit | Replace exactly one unique text occurrence in a file |
-| `overwrite_file` | overwrite | Replace the entire contents of an existing file |
-| `clean_up` | none | Move files the agent created this session into the workspace `to_delete/` folder (recoverable; refuses anything else) |
-| `run_python` | run_python | Execute a `.py` file in-process (not sandboxed; interactive input disabled — see [`docs/testing.md`](docs/testing.md)) |
-| `ask_image` | ask_image | Ask the configured vision model a question about images: workspace files, http(s) URLs, photo-library images (`photo`, negative = from the end), and/or the clipboard image. Uses config.json's `vision_model` (`<provider>/<model-name>`); oversized images are shrunk/re-encoded automatically |
+The full, generated list of every tool — its permission capability and its
+exact description, read straight from the tool registry — is in
+[`docs/reference.md`](docs/reference.md). In outline: three read-only tools
+(`list_files`, `read_file`, `search_files`) need no permission; `create_file`,
+`edit_file`, `multi_edit` and `overwrite_file` mutate the workspace;
+`run_python` executes in-process; `ask_image` asks the configured vision
+model about image(s). `clean_up` and `knowledge` are also ungated —
+`clean_up` only moves files the agent created this session into the
+workspace's `to_delete/` folder (recoverable; refuses anything else), and
+`knowledge` only reads.
 
-Read-only tools require no permission. Mutating and execution tools are
-gated by an interactive prompt with per-once, per-session, and per-workspace
-(persistent) choices. Any choice can be followed by a comment that is
-passed to the agent — for example `n. Write the file to this path foo/bar`
-denies the request but redirects the agent, and `y. But also can you check
-xyz` approves it with an extra instruction attached to the tool result.
-`clean_up` is also ungated: it only accepts files the
-agent itself created with `create_file` in the current session, and it moves
-them into `to_delete/` in the workspace instead of deleting, so nothing is
-lost — empty that folder whenever you like. `ask_image` is gated even
-though it reads rather than writes: it uploads image data — possibly
-photos or clipboard images from outside the workspace — to the vision
-provider's API, and the prompt preview shows exactly which images are about
-to be sent where.
+Mutating and execution tools are gated by an interactive prompt with
+per-once, per-session, and per-workspace (persistent) choices. Any choice
+can be followed by a comment that is passed to the agent — for example
+`n. Write the file to this path foo/bar` denies the request but redirects
+the agent, and `y. But also can you check xyz` approves it with an extra
+instruction attached to the tool result. `ask_image` is gated even though it
+reads rather than writes: it uploads image data — possibly photos or
+clipboard images from outside the workspace — to the vision provider's API,
+and the prompt preview shows exactly which images are about to be sent
+where.
+
+`edit_file` reports a near-miss with a diff against the closest-matching
+region of the file instead of a bare "not found", and takes
+`replace_all`/`occurrence` for a text occurrence that is not unique.
+`multi_edit` applies several edits to one file atomically — either they all
+apply, or the file is left completely untouched — for one permission prompt
+instead of several.
 
 ## Package layout
 
-All paths below are relative to the package root (`miniagent/`).
+All paths below are relative to the package root (`miniagent/`). This is a
+summary for orientation; the generated, always-current module-by-module
+table (each module's own one-line purpose, read straight from its
+docstring) is in [`docs/reference.md`](docs/reference.md).
 
-| File | Responsibility |
+| File / directory | Responsibility |
 |------|----------------|
 | `__init__.py` | Package entry; re-exports `run` from `app.py` |
-| `_jeb.py` | Example one-line launcher script |
-| `app.py` | Construction, JEB.md discovery, and the interactive console loop |
-| `agent.py` | Agent loop: model/tool orchestration and system prompt |
+| `_jeb.py` | Template one-line launcher script (copy into a project as `jeb.py`) |
+| `app.py` | Construction only: builds the object graph and `Context`, then enters the console loop (~100 lines) |
+| `context.py` | The live per-session wiring (`ctx.provider`, `ctx.renderer`, ...) console commands mutate |
+| `agent.py` | Agent loop: `Agent.turn()` is a generator yielding `events.py` events |
+| `events.py` | Typed events exchanged between the agent loop and a front end |
+| `tools/` | One file per tool, self-registered via `@tool` (`registry.py`); `dispatch.py` holds the dispatch generator and permission gate |
+| `console/` | The console loop (`loop.py`), the command registry (`registry.py`), one file per command area under `commands/`, and the `:resume` pager (`resume.py`) |
+| `ui/` | Renderers over the event stream: `console.py` (compact, default), `verbose.py` (expanded), `headless.py` (scripted, for tests) |
+| `checkpoints.py` | Self-editing undo safety net: per-turn file snapshots outside the workspace, restored by `:undo` |
+| `permissions.py` | Permission *policy* only (`decide`/`parse_answer`/`apply_answer`) — no I/O, no prompting |
+| `jebmd.py` | `JEB.md` discovery and the global/local merge engine |
+| `keys.py` | Keychain / API-key loading, storage and legacy migration |
 | `provider.py` | Provider-neutral OpenAI-compatible HTTP client |
-| `vision.py` | Vision question-answering collaborator behind `ask_image` (multimodal payload building, image loading/shrinking, API key via injected loader) |
+| `vision.py` | Vision question-answering collaborator behind `ask_image` |
 | `config.py` | Configuration load/save and first-run setup |
-| `permissions.py` | Permission layer with interactive prompting |
 | `sessions.py` | Append-only JSONL session logs and `:resume` loading |
-| `tools.py` | Tool schemas, dispatch, and permission gating |
 | `runner.py` | In-process Python execution with termination blocking and interactive-input hang prevention |
-| `workspace.py` | Workspace confinement and low-level file operations |
+| `workspace.py` | Workspace confinement, atomic writes with a `.py` compile gate, `edit_file`/`multi_edit` |
+| `knowledge.py` | Collaborator behind the read-only `knowledge` tool |
+| `gendocs.py` | Generates `docs/reference.md` from the tool/command registries and every module's docstring |
 | `tests/` | The in-package test suite — standalone `test_*.py` scripts plus `run_all.py` to run them all (kept, not deleted; see [`docs/testing.md`](docs/testing.md)) |
 | `template_JEB.md` | Template for the global standing instructions (copy to `~/Documents/miniagent/JEB.md`) |
+| `JEB.md` | Standing self-editing rules injected into the system prompt when the workspace is this package itself |
 | `INSTALL.md` | Installation instructions |
 | `README.md` | This file |
-| `docs/` | Architecture, self-editing, testing, and JEB.md guides |
+| `docs/` | Architecture, self-editing, testing, JEB.md, and generated-reference guides |
 
 ## Documentation
 
 - [`docs/architecture.md`](docs/architecture.md) — How the pieces fit
-  together, data flow, and module responsibilities.
+  together: the event stream, the tool/command registries, the renderers,
+  checkpoints, and every module's responsibility.
+- [`docs/reference.md`](docs/reference.md) — **Generated.** The full tool
+  table, command table, and module layout, produced by `gendocs.py` from the
+  live code. Regenerate after a change with `run_python miniagent/gendocs.py`.
 - [`docs/self_editing.md`](docs/self_editing.md) — Guide for a coding agent
   that wants to understand, modify, and extend this harness in place.
-- [`docs/testing.md`](docs/testing.md) — How to test the harness (and
-  prompt-driven code) without interactive prompts or hangs: scripted
-  prompts, `builtins.input` guards, and the `InteractiveInputBlocked`
-  fail-fast behavior of `run_python`.
+- [`docs/testing.md`](docs/testing.md) — How to test the harness without
+  interactive prompts or hangs: driving the agent loop with the `Headless`
+  renderer, testing `Permissions` directly, the few places `builtins.input`
+  is still the right tool, and the `InteractiveInputBlocked` fail-fast
+  behavior of `run_python`.
 - [`docs/jeb_md.md`](docs/jeb_md.md) — How `JEB.md` files work: automatic
   discovery of global and project-local standing instructions.
 - [`INSTALL.md`](INSTALL.md) — How to install the package in Pythonista.
@@ -224,6 +233,12 @@ MiniAgent keeps its own state **outside** your projects:
     sessions/          # recorded conversations, one JSONL file per session
         <workspace-path-with-dashes>/
             2025-06-07_21-14-03.jsonl
+    checkpoints/       # per-turn file snapshots for :undo, one dir per workspace
+        <workspace-path-with-dashes>/
+            <turn-id>/
+                manifest.json
+                0000.bin
+                ...
 ```
 
 The `<workspace-path-with-dashes>` directory is the workspace path relative
@@ -241,8 +256,21 @@ the provider is used.
 - **Workspace confinement** — every file path is resolved against the
   project root and rejected if it escapes (`../` traversal, absolute paths
   outside root, symlink escapes).
-- **Permission gating** — write, edit, overwrite, and run_python each
-  require interactive authorization with once / session / always granularity.
+- **Permission gating** — write, edit, overwrite, run_python, and ask_image
+  each require interactive authorization with once / session / always
+  granularity. Permission *policy* (`permissions.py`) does no I/O; the
+  actual prompting is a renderer's job (see
+  [`docs/architecture.md`](docs/architecture.md)).
+- **Checkpoints** — every mutating file operation snapshots the file's
+  prior bytes outside the workspace before writing, so `:undo` can restore
+  everything one turn changed (and `:checkpoints` lists what is retained).
+  This is the self-editing safety net: an agent editing the harness from
+  inside the harness has a rollback.
+- **A compile gate on Python writes** — any write to a `.py` path is
+  `compile()`d before the atomic rename that would make it live; a syntax
+  error refuses the write (nothing touches disk) and returns the exact
+  line/problem to the model instead of leaving a harness that will not
+  start.
 - **Termination blocking** — the runner does a static AST preflight and
   runtime builtin replacement to stop `exit()`, `sys.exit()`, `os._exit()`,
   `os.kill`, `os.fork`, `os.exec*`, and `raise SystemExit` from killing
@@ -255,4 +283,8 @@ the provider is used.
   [`docs/testing.md`](docs/testing.md).
 - **In-process execution** — `run_python` executes inside the same
   Pythonista process. It is explicitly **not** sandboxed. The system prompt
-  tells the model this.
+  tells the model this. `run_python` also never evicts `miniagent`'s own
+  modules from `sys.modules` after a run, even when the workspace root is
+  the package's own install location (the self-editing case) — otherwise a
+  validation script that imports `miniagent.tools` would hot-reload the
+  *running* harness mid-session.

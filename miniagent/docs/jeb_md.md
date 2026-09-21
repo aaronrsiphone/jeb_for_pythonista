@@ -9,15 +9,32 @@ preferences that persist across every turn of every session.
 ## How it works
 
 When MiniAgent starts (when `run()` is called), it looks for `JEB.md` files
-in three locations:
+in four locations:
 
 | Order | Scope | Location | Purpose |
 |-------|-------|----------|---------|
 | 1 | Global (Documents version) | `~/Documents/miniagent/JEB.md` | Preferred global location — instructions that apply to every project on this install. |
 | 2 | Global (original) | `~/miniagent/JEB.md` (in your home folder) | Legacy global location, kept for backward compatibility. |
-| 3 | Local | `<workspace>/JEB.md` (next to the launcher / in the project root) | Instructions specific to the current project. |
+| 3 | Package (self-editing only) | `<package>/JEB.md`, shipped with MiniAgent | The self-editing rules. Included **only** when the running `miniagent` package lives inside the workspace — i.e. the agent has been pointed at a directory that contains the harness running it. |
+| 4 | Local | `<workspace>/JEB.md` (next to the launcher / in the project root) | Instructions specific to the current project. |
 
-The contents are combined — **global first, local second** — and appended
+### The package entry, and why it is conditional
+
+MiniAgent ships its own `JEB.md` carrying the rules for editing the harness
+safely. Discovery has to go looking for it: the local lookup only checks
+`<workspace>/JEB.md`, and in the usual self-editing setup — the workspace is
+Pythonista's `site-packages` with `miniagent/` sitting *inside* it — that
+path is a sibling of the package, not the shipped file. `jebmd.is_self_edit()`
+detects that arrangement so the rules reach the system prompt automatically
+instead of depending on the agent thinking to open `docs/self_editing.md`.
+
+It is deliberately conditional. An unrelated project gets no self-editing
+rules, because they would be noise that costs context on every turn. And when
+the workspace *is* the package directory, the entry is skipped — the local
+lookup already finds the same file, and including it twice would waste
+context saying the same thing.
+
+The contents are combined — **global first, then package, then local** — and appended
 to the end of the system prompt, after the standard environment
 constraints and coding behavior rules. When both global files exist they
 are merged into a single section first (see

@@ -51,6 +51,9 @@ Related documentation inside `miniagent/`:
 
 - [`docs/architecture.md`](miniagent/docs/architecture.md) — how the pieces
   fit together after a split.
+- [`docs/reference.md`](miniagent/docs/reference.md) — generated tool,
+  command and module tables, produced from the code by `miniagent/gendocs.py`
+  so they cannot drift from it.
 - [`docs/self_editing.md`](miniagent/docs/self_editing.md) — the guide a
   coding agent follows to modify its own harness.
 - [`docs/jeb_md.md`](miniagent/docs/jeb_md.md) — how standing project
