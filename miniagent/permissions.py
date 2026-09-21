@@ -1,16 +1,32 @@
-"""Permission layer for MiniAgent tools.
+"""Permission policy for MiniAgent tools.
 
 Permissions are keyed by the canonical path of the project so that distinct
 projects can have distinct persistent decisions.  The permission store lives
 in the application-state directory, never inside a user project, so the agent
 cannot edit its own permission policy through the file tools.
+
+This module owns **policy only** — it does no I/O and never prompts.  The
+split is deliberate: asking the user is a front-end concern, so a gated tool
+call that stored policy does not already decide becomes a
+:class:`~miniagent.events.PermissionNeeded` event that a renderer answers
+(see :mod:`miniagent.ui`).  Three methods carry the whole flow:
+
+``decide(capability)``
+    Answer from persistent or session policy, or ``None`` for "must ask".
+``parse_answer(raw)``
+    Turn a typed answer (``"y"``, ``"n. use another path"``) into a
+    :class:`~miniagent.events.PermissionAnswer`.  The letter semantics live
+    here, with the policy they select, rather than in each front end.
+``apply_answer(capability, answer)``
+    Record a session/persistent decision and report the outcome.
 """
 
 from __future__ import annotations
 
 import json
 import os
-from typing import Callable
+
+from .events import PermissionAnswer
 
 # Distinct capabilities.
 WRITE = "write"
@@ -89,16 +105,14 @@ def _parse_choice(raw):
 
 
 class Permissions:
-    """Permission store with interactive prompting."""
+    """Persistent + session permission policy for one project.  No I/O."""
 
-    def __init__(self, state_dir: str, project_root: str, prompt: Callable[[str], str] | None = None):
+    def __init__(self, state_dir: str, project_root: str):
         self.state_dir = state_dir
         self.project_key = os.path.realpath(project_root)
         self.path = os.path.join(state_dir, "permissions.json")
-        self._prompt = prompt or _default_prompt
         self._data = self._load()
         self._session: dict[str, dict[str, str]] = {}
-        self._legend_shown = False
 
     # -- persistence --------------------------------------------------------
 
@@ -127,93 +141,68 @@ class Permissions:
 
     # -- public API ---------------------------------------------------------
 
-    def authorize(self, capability: str, title: str, details: str) -> bool:
-        """Return True if *capability* is allowed, possibly after prompting.
+    def decide(self, capability: str):
+        """Return the stored decision for *capability*, or ``None`` to ask.
 
-        Mirrors the original jeb.py ``PermissionManager.authorize`` signature
-        and prompt: *title* is a short uppercase label (e.g. ``"CREATE FILE"``)
-        and *details* is a multi-line preview shown beneath a rule.
-        """
-        allowed, _comment = self.authorize_with_comment(capability, title, details)
-        return allowed
+        Persistent (per-workspace) decisions take precedence over
+        session-scoped ones, matching the historical order.  ``None`` means
+        no stored policy covers this capability yet, so the caller must
+        raise a :class:`~miniagent.events.PermissionNeeded` event and feed
+        the answer back through :meth:`apply_answer`.
 
-    def authorize_with_comment(self, capability: str, title: str, details: str) -> tuple[bool, str]:
-        """Like ``authorize`` but also return the user's comment.
-
-        Returns ``(allowed, comment)`` where *comment* is the free-text note
-        the user appended to their prompt answer (e.g. ``"n. Write it to
-        foo/bar"`` -> ``"Write it to foo/bar"``).  It is empty when the user
-        gave no comment or no interactive prompt was shown because a session
-        or persistent decision already covered the capability.  Callers
-        should relay a non-empty comment back to the model so it can follow
-        the user's redirect or addendum.
+        An unknown capability is refused outright (``False``) rather than
+        prompted for, so a typo in a tool's capability map can never turn
+        into a question the user might approve.
         """
         if capability not in CAPABILITIES:
-            return False, ""
+            return False
 
         proj = self._proj()
         sess = self._session_proj()
 
-        # Persistent decisions take precedence.
         if proj.get(capability) == ALWAYS_ALLOW:
-            return True, ""
+            return True
         if proj.get(capability) == ALWAYS_DENY:
-            return False, ""
-
-        # Session-scoped decisions.
+            return False
         if sess.get(capability) == SESSION_ALLOW:
-            return True, ""
+            return True
         if sess.get(capability) == SESSION_DENY:
+            return False
+        return None
+
+    @staticmethod
+    def parse_answer(raw):
+        """Parse a typed permission answer into a ``PermissionAnswer``.
+
+        Accepts a bare choice letter (``"y"``), a blank answer (deny-once,
+        the historical behaviour), or a letter followed by a separator and a
+        free-text comment for the agent (``"n. Write it to foo/bar"``).
+        Returns ``None`` when *raw* is not a recognisable answer (``"yes"``,
+        ``"nope"``), so a front end can re-prompt.
+
+        This is deliberately the only place that knows what the letters
+        mean: front ends collect the keystroke and hand it straight here.
+        """
+        parsed = _parse_choice(raw)
+        if parsed is None:
+            return None
+        letter, comment = parsed
+        return PermissionAnswer(_CHOICE_MAP[letter], comment)
+
+    def apply_answer(self, capability: str, answer) -> tuple[bool, str]:
+        """Record *answer* for *capability* and return ``(allowed, comment)``.
+
+        Session and persistent decisions are stored so the same capability
+        is not asked about again; once-decisions are not stored.  A missing
+        or malformed answer (including ``None``, which is what a driver
+        sends when its front end could not ask) is treated as a deny-once —
+        the same safe default a blank answer has always had.
+        """
+        if capability not in CAPABILITIES:
             return False, ""
-
-        # Interactive prompt.
-        choice, comment = self._ask(capability, title, details)
-        return self._apply(capability, choice), comment
-
-    # Backwards-compatible alias used by older callers.
-    def check(self, capability: str, context: str = "") -> bool:
-        return self.authorize(capability, capability.upper(), context)
-
-    # -- prompting ----------------------------------------------------------
-
-    def _ask(self, capability: str, title: str, details: str) -> tuple[str, str]:
-        """Prompt the user, returning ``(decision_token, comment)``."""
-        if not self._legend_shown:
-            # First prompt of this instance's lifetime: show everything,
-            # including the choice-letter legend, exactly as before.
-            print()
-            print("=" * 68)
-            print(f"PERMISSION REQUEST: {title}")
-            print(f"Capability: {capability}")
-            print("-" * 68)
-            print(_trunc(details, _MAX_DIFF_CHARS))
-            print("-" * 68)
-            _print_legend()
-            self._legend_shown = True
-            prompt_message = "Permission [y/s/a/n/d/x]: "
-        else:
-            # Subsequent prompts: compact header, no legend, no rules.
-            print(f"PERMISSION  {capability}  {title}")
-            print(_trunc(details, _MAX_DIFF_CHARS))
-            prompt_message = "[y/s/a/n/d/x ?] "
-
-        while True:
-            raw = self._prompt(prompt_message)
-
-            if raw.strip() == "?":
-                # Not a real answer — reprint the legend and re-prompt.
-                _print_legend()
-                continue
-
-            parsed = _parse_choice(raw)
-            if parsed is None:
-                # Unknown input — re-prompt.
-                print('Unrecognised answer. Use one of y/s/a/n/d/x, optionally')
-                print('followed by a comment, e.g. "n. Use another path".')
-                continue
-
-            letter, comment = parsed
-            return _CHOICE_MAP[letter], comment
+        if not isinstance(answer, PermissionAnswer):
+            return False, ""
+        return self._apply(capability, answer.decision), answer.comment
 
     def _apply(self, capability: str, decision: str) -> bool:
         """Persist/record *decision* and return whether it is an allow."""
@@ -265,27 +254,3 @@ class Permissions:
         self._session.pop(self.project_key, None)
         self._data.get("projects", {}).pop(self.project_key, None)
         self._save()
-
-
-def _print_legend():
-    """Print the six choice-letter lines plus the comment-syntax hint.
-
-    Shown in full on the first permission prompt of a session, and again on
-    demand whenever the user answers ``?``.
-    """
-    print("y  allow once")
-    print("s  allow this capability for this session")
-    print("a  always allow for this workspace")
-    print("n  deny once")
-    print("d  deny this capability for this session")
-    print("x  always deny for this workspace")
-    print()
-    print("You may append a comment for the agent after any choice, e.g.")
-    print('  "y. But also can you check xyz"  or  "n. Write it to foo/bar"')
-
-
-def _default_prompt(message: str) -> str:
-    try:
-        return input(message)
-    except EOFError:
-        return ""

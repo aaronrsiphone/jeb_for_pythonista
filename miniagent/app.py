@@ -20,6 +20,7 @@ from .provider import Provider
 from .runner import Runner
 from .sessions import SessionLogger, SessionError, repair_messages
 from .tools import Tools
+from .ui import drive, get_renderer
 from .vision import Vision
 from .workspace import Workspace, WorkspaceError
 
@@ -33,7 +34,8 @@ _BANNER = """
  Commands:
    :help  :config  :key  :model
    :perms  :reset  :clear-perms
-   :effort  :files  :context  :resume  :quit
+   :effort  :files  :context  :resume
+   :verbose  :quit
 =================================================
 """
 
@@ -480,8 +482,13 @@ def run(project_root):
     agent = Agent(provider, tools, build_system_prompt(str(root), jeb_context),
                   recorder=session_logger)
 
+    # The front end is a renderer over the agent's event stream, chosen
+    # here and swappable at runtime with :verbose.  The engine itself prints
+    # nothing, so this is the only place that decides how a turn looks.
+    renderer = get_renderer("console")
+
     _console_loop(agent, config, permissions, workspace, root, provider,
-                  session_logger)
+                  session_logger, renderer)
 
 
 # ---------------------------------------------------
@@ -489,7 +496,7 @@ def run(project_root):
 # ---------------------------------------------------
 
 def _console_loop(agent, config, permissions, workspace, root, provider,
-                  session_logger):
+                  session_logger, renderer, renderer_name="console"):
     endpoint = provider.base_url.rstrip("/") + "/" + provider.chat_path.lstrip("/")
     model_label = (
         f"{config.provider}/{config.model}" if config.provider else config.model
@@ -574,9 +581,16 @@ def _console_loop(agent, config, permissions, workspace, root, provider,
             provider = _model_command(agent, config, provider, arg)
             continue
 
-        # Anything else is a prompt for the agent.
+        if line == ":verbose" or line.startswith(":verbose "):
+            renderer, renderer_name = _verbose_command(
+                renderer, renderer_name, line[len(":verbose"):].strip()
+            )
+            continue
+
+        # Anything else is a prompt for the agent.  drive() pumps the
+        # agent's event generator into the active renderer.
         try:
-            agent.turn(line)
+            drive(agent, line, renderer)
         except KeyboardInterrupt:
             print("\n[interrupted]")
             # The stop button can land mid-tool-loop, after an assistant
@@ -634,6 +648,13 @@ Commands
 :effort [low|medium|high|xhigh|max]
     Set reasoning effort level sent as reasoning_effort.
     No argument prints the current level.
+
+:verbose [on|off]
+    Switch the front end between the compact console renderer (the
+    default: collapsed reasoning, one line per tool call, the permission
+    legend shown once) and the verbose one (full reasoning, separate tool
+    request/result lines, the legend on every prompt). No argument prints
+    the current renderer.
 
 :files
     List top-level project files.
@@ -826,6 +847,29 @@ def _key_set(config, rest):
         print("API key stored in keychain.")
     else:
         print("API key stored in environment (keychain unavailable).")
+
+
+def _verbose_command(renderer, current, arg):
+    """Handle ``:verbose`` — swap the active renderer.
+
+    Returns ``(renderer, name)`` to use from here on (unchanged when the
+    argument is missing or invalid), mirroring how ``:model`` returns the
+    provider to keep using.  The name is tracked alongside the instance
+    rather than inferred from its class, so renaming a renderer class
+    cannot silently break this command.
+    """
+    if not arg:
+        print(f"Renderer: {current}")
+        return renderer, current
+    wanted = {"on": "verbose", "off": "console"}.get(arg.lower())
+    if wanted is None:
+        print("Usage: :verbose [on|off]")
+        return renderer, current
+    if wanted == current:
+        print(f"Renderer already {current}.")
+        return renderer, current
+    print(f"Renderer: {wanted}")
+    return get_renderer(wanted), wanted
 
 
 def _clear_perms(permissions):
