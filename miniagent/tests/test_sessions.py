@@ -6,8 +6,9 @@ touched because every SessionLogger is pointed at a throwaway state dir.
 Agent turns are driven headlessly (miniagent.ui.drive + Headless): the agent
 is a generator of events and prints nothing, so no stdout capture or input
 stubbing is involved in recording a turn. The one remaining interactive path
-exercised here is :resume's picker in app.py, which still reads its selection
-with input() and is therefore driven through a scripted builtins.input queue.
+exercised here is :resume's picker (miniagent.console.resume), which still
+reads its selection with input() and is therefore driven through a scripted
+builtins.input queue.
 Lives permanently in miniagent/tests/; run it directly or through run_all.py.
 """
 
@@ -33,8 +34,8 @@ parent = Path(__file__).resolve().parent.parent.parent
 if str(parent) not in sys.path:
     sys.path.insert(0, str(parent))
 
-from miniagent import app as ma_app  # noqa: E402
 from miniagent.agent import Agent  # noqa: E402
+from miniagent.console.resume import resume_command as _resume_command  # noqa: E402
 from miniagent.events import ToolCompleted, ToolStarted  # noqa: E402
 from miniagent.sessions import (  # noqa: E402
     SessionError,
@@ -387,7 +388,7 @@ try:
                          recorder=pager_logger)
     scripted = ScriptedInput(["5", "0", "2"])
     out = with_patched_input(
-        scripted, lambda: ma_app._resume_command(picker_agent, pager_logger))
+        scripted, lambda: _resume_command(picker_agent, pager_logger))
 
     check("picker consumed exactly three answers", len(scripted.prompts), 3)
     check("both pages were shown",
@@ -409,7 +410,7 @@ try:
     scripted_cancel = ScriptedInput([""])
     with_patched_input(
         scripted_cancel,
-        lambda: ma_app._resume_command(cancel_agent, cancel_logger))
+        lambda: _resume_command(cancel_agent, cancel_logger))
     check("blank input cancels",
           cancel_agent.messages,
           [{"role": "system", "content": "sysprompt"}])
@@ -417,7 +418,7 @@ try:
     # EOF also cancels
     eof_agent = Agent(FakeProvider([]), FakeTools(), "sysprompt")
     with_patched_input(EOFInput(),
-                       lambda: ma_app._resume_command(eof_agent, pager_logger))
+                       lambda: _resume_command(eof_agent, pager_logger))
     check("EOF cancels the picker", len(eof_agent.messages), 1)
 
     # invalid inputs re-prompt until a valid choice arrives
@@ -427,7 +428,7 @@ try:
     scripted_retry = ScriptedInput(["x", "9", "0", "3"])
     out = with_patched_input(
         scripted_retry,
-        lambda: ma_app._resume_command(retry_agent, retry_logger))
+        lambda: _resume_command(retry_agent, retry_logger))
     check("invalid entries re-prompt", len(scripted_retry.prompts), 4)
     check("picked third entry after retries",
           retry_logger.active_id, expected_order[2])
@@ -438,7 +439,7 @@ try:
     empty_agent = Agent(FakeProvider([]), FakeTools(), "sysprompt")
     out = with_patched_input(
         ScriptedInput([]),
-        lambda: ma_app._resume_command(empty_agent, empty_logger))
+        lambda: _resume_command(empty_agent, empty_logger))
     check("no-sessions message shown",
           "No recorded sessions" in out, True)
 
