@@ -14,6 +14,7 @@ import time
 from pathlib import Path
 
 from .agent import Agent, build_system_prompt
+from .checkpoints import Checkpoints
 from .config import Config, default_state_dir
 from .permissions import Permissions
 from .provider import Provider
@@ -35,7 +36,7 @@ _BANNER = """
    :help  :config  :key  :model
    :perms  :reset  :clear-perms
    :effort  :files  :context  :resume
-   :verbose  :quit
+   :verbose  :undo  :checkpoints  :quit
 =================================================
 """
 
@@ -458,8 +459,13 @@ def run(project_root):
 
     api_key = _ensure_api_key(config)
 
+    # Checkpoints (§5.2): snapshots live outside the workspace (like
+    # permissions.json and the session logs) so the agent's own file tools
+    # cannot reach or tamper with its own undo history.
+    checkpoints = Checkpoints(root, state_dir=state_dir)
+
     try:
-        workspace = Workspace(root)
+        workspace = Workspace(root, checkpoints=checkpoints)
     except WorkspaceError as exc:
         print(exc)
         return
@@ -488,7 +494,7 @@ def run(project_root):
     renderer = get_renderer("console")
 
     _console_loop(agent, config, permissions, workspace, root, provider,
-                  session_logger, renderer)
+                  session_logger, renderer, checkpoints=checkpoints)
 
 
 # ---------------------------------------------------
@@ -496,7 +502,8 @@ def run(project_root):
 # ---------------------------------------------------
 
 def _console_loop(agent, config, permissions, workspace, root, provider,
-                  session_logger, renderer, renderer_name="console"):
+                  session_logger, renderer, renderer_name="console",
+                  checkpoints=None):
     endpoint = provider.base_url.rstrip("/") + "/" + provider.chat_path.lstrip("/")
     model_label = (
         f"{config.provider}/{config.model}" if config.provider else config.model
@@ -586,9 +593,19 @@ def _console_loop(agent, config, permissions, workspace, root, provider,
                 renderer, renderer_name, line[len(":verbose"):].strip()
             )
             continue
+        if line == ":undo":
+            _undo_command(checkpoints)
+            continue
+        if line == ":checkpoints":
+            _checkpoints_command(checkpoints)
+            continue
 
         # Anything else is a prompt for the agent.  drive() pumps the
         # agent's event generator into the active renderer.
+        if checkpoints is not None:
+            # One snapshot group per turn: every mutation the agent makes
+            # answering this prompt is undoable as a unit with :undo.
+            checkpoints.begin_turn()
         try:
             drive(agent, line, renderer)
         except KeyboardInterrupt:
@@ -655,6 +672,16 @@ Commands
     legend shown once) and the verbose one (full reasoning, separate tool
     request/result lines, the legend on every prompt). No argument prints
     the current renderer.
+
+:undo
+    Restore every file the last turn touched to its state from before that
+    turn (a create_file is undone by deleting the file it created). Asks
+    for confirmation first, since it discards whatever is on disk now.
+    Undoing again goes one turn further back.
+
+:checkpoints
+    List the retained undo groups (newest first): turn id, timestamp and
+    the files each one touched.
 
 :files
     List top-level project files.
@@ -880,6 +907,64 @@ def _clear_perms(permissions):
     if confirm == "y":
         permissions.clear()
         print("Permissions cleared.")
+
+
+def _undo_command(checkpoints):
+    """Handle ``:undo`` — restore the last turn's checkpointed files.
+
+    Confirms first since it discards whatever is on disk now for every file
+    the last turn touched, then reports exactly what was restored/removed.
+    """
+    if checkpoints is None:
+        print("Checkpoints are not available in this session.")
+        return
+    groups = checkpoints.list_groups()
+    if not groups:
+        print("Nothing to undo.")
+        return
+    latest = groups[0]
+    print(f"This will undo turn {latest['turn_id']} ({len(latest['files'])} file(s)):")
+    for path in latest["files"]:
+        print(f"  {path}")
+    try:
+        confirm = input("Undo? This discards current file state. [y/N]: ").strip().lower()
+    except EOFError:
+        confirm = ""
+    if confirm != "y":
+        print("Cancelled.")
+        return
+    report = checkpoints.undo_last()
+    if report is None:
+        print("Nothing to undo.")
+        return
+    for path in report["restored"]:
+        print(f"  restored: {path}")
+    for path in report["deleted"]:
+        print(f"  deleted:  {path}")
+    for err in report["errors"]:
+        print(f"  error:    {err['path']} ({err['error']})")
+    print(f"Undid turn {report['turn_id']}: "
+          f"{len(report['restored'])} restored, "
+          f"{len(report['deleted'])} deleted, "
+          f"{len(report['errors'])} error(s).")
+
+
+def _checkpoints_command(checkpoints):
+    """Handle ``:checkpoints`` — list the retained undo groups."""
+    if checkpoints is None:
+        print("Checkpoints are not available in this session.")
+        return
+    groups = checkpoints.list_groups()
+    if not groups:
+        print("No checkpoints recorded yet.")
+        return
+    print(f"Retained checkpoints for this workspace (newest first, "
+          f"{len(groups)} of {checkpoints.retention} max):")
+    for group in groups:
+        print(f"  {group['turn_id']}  ({group['started']})  "
+              f"{len(group['files'])} file(s)")
+        for path in group["files"]:
+            print(f"      {path}")
 
 
 def _effort(provider, arg):
