@@ -184,6 +184,11 @@ try:
         "ask_image": ({"question": "what is this?",
                        "images": ["picture.png"]}, "error"),
         "knowledge": ({"action": "list"}, "ok"),
+        # No WebSearch collaborator here (and Brave is unreachable from the
+        # test environment anyway), so a clean implementation error is the
+        # right answer.  test_web_search.py drives it end to end with fakes.
+        "web_search": ({"prompt": "What is the Adam optimizer update rule?"},
+                       "error"),
     }
 
     declared = [s["function"]["name"] for s in TOOL_SCHEMAS]
@@ -260,7 +265,7 @@ try:
     check("the gated set is the capability map",
           gated_names,
           sorted(["ask_image", "create_file", "edit_file", "multi_edit",
-                  "overwrite_file", "run_python"]))
+                  "overwrite_file", "run_python", "web_search"]))
 
     for name in gated_names:
         # A fresh policy each time, so no stored decision short-circuits it.

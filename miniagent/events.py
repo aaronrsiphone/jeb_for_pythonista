@@ -24,7 +24,8 @@ sequence::
     AssistantText       (optional, one per model step that emitted text)
     ToolStarted         \\
     PermissionNeeded     |  per tool call, PermissionNeeded only when the
-    ToolCompleted       /   stored policy does not already decide it
+    ToolProgress         |  stored policy does not already decide it;
+    ToolCompleted       /   ToolProgress only from a delegating tool
     ...                     (loop continues while the model calls tools)
     TurnEnded
 
@@ -108,6 +109,23 @@ class ToolCompleted(Event):
     status: str
     comment: str = ""
     payload: dict = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class ToolProgress(Event):
+    """Interim progress from a tool that is still running.
+
+    Emitted only by *delegating* tools — tools that run an agent of their own,
+    such as ``web_search`` — between the tool's ``ToolStarted`` and its
+    ``ToolCompleted``.  It exists so that a long tool call is visibly alive on
+    a phone, without forwarding the inner agent's own ``ToolStarted`` /
+    ``ToolCompleted`` events: those would break the guarantee that every tool
+    call the model makes produces exactly one start/complete pair.  *name* is
+    the outer tool's name; *text* is one short human-readable line.
+    """
+
+    name: str
+    text: str
 
 
 @dataclass(frozen=True)

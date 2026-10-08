@@ -10,6 +10,7 @@ The file has this shape::
       "provider": "mistral",          # currently selected provider
       "model": "zai-glm-5-3",         # currently selected model
       "vision_model": "mistral/pixtral-12b-2409",  # used by ask_image
+      "search_model": "mistral/mistral-small-latest",  # used by web_search
       "providers": {
         "mistral": {
           "base_url": "https://api.mistral.ai/v1",
@@ -28,8 +29,14 @@ The file has this shape::
 ``vision_model`` selects the provider/model pair the ``ask_image`` tool
 sends images to; the format is ``<provider>/<model-name>``, or a bare model
 name to use the currently selected provider.  It is optional: when absent,
-``ask_image`` reports that no vision model is configured.  Unknown top-level
-keys are preserved on load/save.
+``ask_image`` reports that no vision model is configured.
+
+``search_model`` selects the model the ``web_search`` tool's inner search
+agent runs on, in the same format.  It is optional too: when absent, the
+search agent uses the currently selected chat model.  Pointing it at a
+cheaper, faster model is usually worthwhile, since the search agent makes
+several calls per search request.  Unknown top-level keys are preserved on
+load/save.
 
 Older flat configs (``base_url`` / ``model`` at the top level) are migrated
 automatically the first time they are loaded: the single provider is named
@@ -504,6 +511,17 @@ class Config:
             if not model:
                 raise KeyError("vision_model needs a model name after the provider")
             self._data["vision_model"] = value
+        elif key == "search_model":
+            value = str(value).strip()
+            provider, model = _split_vision_model(value)
+            if provider is not None and provider not in self._data["providers"]:
+                known = ", ".join(sorted(self._data["providers"])) or "(none)"
+                raise KeyError(
+                    f"Unknown search provider: {provider}. Available: {known}"
+                )
+            if not model:
+                raise KeyError("search_model needs a model name after the provider")
+            self._data["search_model"] = value
         elif key in _SETTABLE_PROVIDER_KEYS:
             name = self._data["provider"]
             if not name:
@@ -528,6 +546,9 @@ class Config:
         vision_model = str(data.get("vision_model", "") or "")
         if vision_model:
             lines.append(f"  vision_model = {vision_model!r}")
+        search_model = str(data.get("search_model", "") or "")
+        if search_model:
+            lines.append(f"  search_model = {search_model!r}")
         lines.append("  providers:")
         for name, settings in data["providers"].items():
             tag = "  (selected)" if name == data["provider"] else ""

@@ -109,6 +109,23 @@ model name to use the selected provider's endpoint. It is optional; when
 absent, `ask_image` reports that no vision model is configured. Change it
 with `:config set vision_model <provider>/<model-name>`.
 
+### Web search
+
+The `web_search` tool researches a question through a search sub-agent
+that runs up to four Brave Search (LLM Context API) queries and returns a
+short plain-text answer with source URLs. Only the answer reaches the main
+conversation, not the pages it read. Results are ranked toward papers,
+preprints, mathematical references and core library documentation, with
+news and content farms removed. That ranking is a Brave Goggle in
+`tools/web_search.py`, whose docstring explains how to edit it.
+
+Store a Brave key with `:key set brave <key>`. Optionally set
+`:config set search_model <provider>/<model-name>` to run the sub-agent on a
+cheaper model; it defaults to the selected chat model. Requests are limited
+on this side to 2 per second and 2,000 per month, counted in
+`brave_usage.json`. The tool is gated: the first use asks for permission and
+shows the request before it leaves the device.
+
 ### Give the agent standing instructions
 
 Create a `JEB.md` file to provide project-specific instructions that are
@@ -243,6 +260,7 @@ MiniAgent keeps its own state **outside** your projects:
     sessions/          # recorded conversations, one JSONL file per session
         <workspace-path-with-dashes>/
             2025-06-07_21-14-03.jsonl
+    brave_usage.json   # Brave Search requests per month, for web_search's quota
     checkpoints/       # per-turn file snapshots for :undo, one dir per workspace
         <workspace-path-with-dashes>/
             <turn-id>/

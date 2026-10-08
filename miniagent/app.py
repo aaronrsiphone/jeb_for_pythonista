@@ -13,12 +13,13 @@ from __future__ import annotations
 from pathlib import Path
 
 from .agent import Agent, build_system_prompt
+from .brave import BraveSearch
 from .checkpoints import Checkpoints
 from .config import Config, default_state_dir
 from .console import console_loop
 from .context import Context
 from .jebmd import load_jeb_md_context
-from .keys import _ensure_api_key, _load_api_key
+from .keys import _ensure_api_key, _load_api_key, load_brave_key
 from .permissions import Permissions
 from .provider import Provider
 from .runner import Runner
@@ -26,6 +27,7 @@ from .sessions import SessionLogger
 from .tools import Tools
 from .ui import get_renderer
 from .vision import Vision
+from .websearch import WebSearch
 from .workspace import Workspace, WorkspaceError
 
 
@@ -65,7 +67,14 @@ def run(project_root):
     # provider/model from config.json's "vision_model" key and loads that
     # provider's API key through the same keychain scheme as the main chat.
     vision = Vision(config, load_key=lambda name: _load_api_key(config, name))
-    tools = Tools(workspace, permissions, runner, vision=vision)
+    # Web search collaborator for the web_search tool: the Brave client keeps
+    # its monthly request count in the state directory, and the search
+    # agent's model comes from config.json's "search_model" key (falling
+    # back to the selected chat model), with keys loaded the same way.
+    brave = BraveSearch(load_key=load_brave_key, state_dir=state_dir)
+    web = WebSearch(config, load_key=lambda name: _load_api_key(config, name),
+                    brave=brave)
+    tools = Tools(workspace, permissions, runner, vision=vision, web=web)
     provider = Provider(config, api_key)
     problem = provider.endpoint_problem()
     if problem:

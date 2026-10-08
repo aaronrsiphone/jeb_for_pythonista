@@ -15,6 +15,8 @@ from ...keys import (
     _load_api_key,
     _secure_input,
     _store_api_key,
+    load_brave_key,
+    store_brave_key,
 )
 from ...provider import Provider, ProviderError, list_models
 from ...ui import get_renderer
@@ -59,7 +61,7 @@ def _config_set(ctx, rest):
         return
     if key in ("provider", "model"):
         _apply_selection(ctx, previous, ctx.config.provider, ctx.config.model)
-    elif key != "vision_model":
+    elif key not in ("vision_model", "search_model"):
         # Endpoint/auth settings are snapshotted by Provider at
         # construction: rebuild it so the change applies without a restart.
         fresh = Provider(ctx.config, ctx.provider.api_key)
@@ -95,17 +97,22 @@ def _apply_selection(ctx, previous_name, provider_name, model_name):
 
 @command("key")
 def key_command(ctx, arg):
-    """Show which providers have an API key stored.
+    """Show which providers have an API key stored, and the Brave Search key.
 
     :key set VALUE
         Store VALUE as the current provider's key and start using it
         immediately (same as ':rotate-key VALUE').
+    :key set brave VALUE
+        Store the Brave Search API key used by the web_search tool.
     :key clear
         Forget the current provider's stored key.
     """
     rest = arg.strip()
     if rest.startswith("set ") or rest == "set":
         value = rest[len("set"):].strip()
+        if value == "brave" or value.startswith("brave "):
+            _brave_key_set(value[len("brave"):].strip())
+            return
         if not value:
             print("Usage: :key set <value>")
             return
@@ -120,8 +127,8 @@ def key_command(ctx, arg):
               "is now unauthenticated. Run :rotate-key to enter a new one.")
         return
     if rest:
-        print(f"Unknown :key usage: {arg!r}. "
-              "Use ':key', ':key set VALUE' or ':key clear'.")
+        print(f"Unknown :key usage: {arg!r}. Use ':key', ':key set VALUE', "
+              "':key set brave VALUE' or ':key clear'.")
         return
     current = ctx.config.provider
     stored = bool(_load_api_key(ctx.config))
@@ -140,6 +147,7 @@ def key_command(ctx, arg):
         else:
             state = "stored" if _load_api_key(ctx.config, name) else "MISSING"
         print(f"  {name}: {state}")
+    print(f"Brave Search API key stored: {bool(load_brave_key())}")
 
 
 def _install_key(ctx, name, value):
@@ -288,6 +296,17 @@ def provider_command(ctx, arg):
                   "[MODEL,...] | :provider remove NAME | :provider models [NAME]")
     except (KeyError, ValueError) as exc:
         print(f"  error: {exc.args[0] if exc.args else exc}")
+
+
+def _brave_key_set(value):
+    if not value:
+        print("Usage: :key set brave <value>")
+        return
+    if store_brave_key(value):
+        print("Brave Search API key stored in keychain.")
+    else:
+        print("Brave Search API key stored in environment for this session "
+              "(keychain unavailable).")
 
 
 @command("model", aliases=("models",))

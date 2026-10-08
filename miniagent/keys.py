@@ -16,6 +16,12 @@ from .config import Config
 
 KEYCHAIN_ACCOUNT = "api_key"
 
+# Brave Search is not a chat provider, so its key has its own keychain
+# service and its own environment fallback rather than the per-provider
+# scheme below (whose single MINIAGENT_API_KEY fallback it cannot share).
+BRAVE_SERVICE = "MiniAgent:brave"
+BRAVE_ENV = "BRAVE_API_KEY"
+
 
 def _get_keychain():
     try:
@@ -184,3 +190,32 @@ def _ensure_api_key(config: Config) -> str:
     else:
         print("API key kept in memory for this run only (keychain unavailable).")
     return value
+
+
+def load_brave_key() -> str:
+    """Return the Brave Search API key from the keychain, else BRAVE_API_KEY."""
+    kc = _get_keychain()
+    if kc is not None:
+        try:
+            key = kc.get_password(BRAVE_SERVICE, KEYCHAIN_ACCOUNT) or ""
+        except Exception:
+            key = ""
+        if key:
+            return key
+    return os.environ.get(BRAVE_ENV, "")
+
+
+def store_brave_key(value: str) -> bool:
+    """Store the Brave key; True if it went to the keychain, False if env-only."""
+    kc = _get_keychain()
+    if kc is None:
+        os.environ[BRAVE_ENV] = value
+        return False
+    try:
+        kc.set_password(BRAVE_SERVICE, KEYCHAIN_ACCOUNT, value)
+        return True
+    except Exception:
+        # Keychain present but unwritable: keep the key usable for this
+        # session rather than reporting success while storing nothing.
+        os.environ[BRAVE_ENV] = value
+        return False

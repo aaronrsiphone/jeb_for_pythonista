@@ -22,6 +22,7 @@ from ..events import (
     ReasoningChunk,
     StepLimitReached,
     ToolCompleted,
+    ToolProgress,
     ToolStarted,
     TurnEnded,
     TurnFailed,
@@ -102,6 +103,8 @@ class Console:
             self.on_assistant_text(event)
         elif isinstance(event, ToolStarted):
             self.on_tool_started(event)
+        elif isinstance(event, ToolProgress):
+            self.on_tool_progress(event)
         elif isinstance(event, ToolCompleted):
             self.on_tool_completed(event)
         elif isinstance(event, StepLimitReached):
@@ -133,6 +136,11 @@ class Console:
         # Nothing: the compact format prints a single line per tool call once
         # it completes, so request and result do not cost two lines each.
         pass
+
+    def on_tool_progress(self, event):
+        # Indented under the tool line that will follow, so a long-running
+        # tool (web_search) is visibly alive instead of silent.
+        print(f"  ↳ {event.text}")
 
     def on_tool_completed(self, event):
         comment = str(event.comment or "").strip()

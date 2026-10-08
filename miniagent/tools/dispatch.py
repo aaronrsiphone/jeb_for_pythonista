@@ -21,6 +21,7 @@ import json
 
 from . import registry as _registry
 from .. import permissions as _perm
+from ..brave import SearchError
 from ..events import PermissionNeeded, ToolCompleted, ToolStarted
 from ..knowledge import Knowledge, KnowledgeError
 from ..runner import Runner, RunnerError
@@ -46,7 +47,7 @@ class Tools:
     """Holds tool implementations and centralised permission gating."""
 
     def __init__(self, workspace: Workspace, permissions: _perm.Permissions, runner: Runner,
-                 knowledge: Knowledge = None, vision: Vision = None):
+                 knowledge: Knowledge = None, vision: Vision = None, web=None):
         self.workspace = workspace
         self.permissions = permissions
         self.runner = runner
@@ -60,6 +61,11 @@ class Tools:
         # keychain-backed key loader), so app.py passes it in; when absent,
         # ask_image reports that vision is not configured.
         self._vision = vision
+        # Collaborator behind the `web_search` tool (a WebSearch from
+        # websearch.py): the search model's provider and the Brave client.
+        # Like vision it needs config and keys, so app.py passes it in; when
+        # absent, web_search reports that web search is not configured.
+        self._web = web
         # Files created with create_file during this session (canonical
         # absolute paths).  clean_up may only move these, so it needs no
         # permission prompt: the agent can only tidy away its own debris,
@@ -138,8 +144,16 @@ class Tools:
                 return _result(outcome)
 
         try:
-            outcome = self._execute(name, args)
-        except (WorkspaceError, RunnerError, KnowledgeError, VisionError) as exc:
+            spec = _registry.get_spec(name)
+            if spec is not None and spec.delegates:
+                # A delegating tool is a generator: it yields ToolProgress
+                # while it works and returns its outcome, so pass its events
+                # straight through to the driver.
+                outcome = yield from spec.func(self, **_call_kwargs(spec, args))
+            else:
+                outcome = self._execute(name, args)
+        except (WorkspaceError, RunnerError, KnowledgeError, VisionError,
+                SearchError) as exc:
             msg = str(exc)
             if msg.startswith("Blocked"):
                 outcome = {"ok": False, "blocked": True, "error": msg}
@@ -174,6 +188,7 @@ class Tools:
     # -- implementations -----------------------------------------------------
 
     def _execute(self, name: str, args: dict) -> dict:
+        """Run a plain (non-delegating) tool; ``dispatch`` handles generators."""
         spec = _registry.get_spec(name)
         if spec is None:
             return {"error": f"Unknown tool: {name}"}

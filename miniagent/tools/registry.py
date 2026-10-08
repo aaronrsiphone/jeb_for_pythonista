@@ -66,6 +66,13 @@ class ToolSpec:
     def __init__(self, func, capability=None, params=None, overrides=None):
         self.func = func
         self.name = func.__name__
+        # A tool written as a generator function *delegates*: it runs work of
+        # its own (an inner agent, for web_search), yields ToolProgress
+        # events while it does, and returns its outcome dict.  Detected from
+        # the function itself rather than declared, so it cannot be
+        # mis-declared: a generator tool that dispatch called plainly would
+        # hand back a generator object instead of a result.
+        self.delegates = inspect.isgeneratorfunction(func)
         self.capability = capability
         self.description = _clean_doc(func.__doc__)
         self.preview_func = None
@@ -135,6 +142,11 @@ def tool(capability=None, params=None, overrides=None):
     dict shallow-merged onto that parameter's derived schema, for shapes an
     annotation alone cannot express (an enum, a nested object array, an
     explicit ``default``).
+
+    Write the function as a generator (``yield`` ``ToolProgress`` events,
+    ``return`` the outcome dict) for a long-running tool that should show
+    progress; the dispatcher detects this and delegates to it with
+    ``yield from``.  See ``tools/web_search.py``.
     """
 
     def decorate(func):
