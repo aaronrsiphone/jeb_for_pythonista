@@ -28,6 +28,7 @@ from .clean_up import clean_up  # noqa: F401
 from .run_python import run_python  # noqa: F401
 from .ask_image import ask_image  # noqa: F401
 from .knowledge import knowledge  # noqa: F401
+from .web_search import web_search  # noqa: F401
 
 from .dispatch import Tools  # noqa: E402  (after registration, before use)
 
@@ -36,7 +37,9 @@ from .dispatch import Tools  # noqa: E402  (after registration, before use)
 # too: none of its actions writes a file or executes code.  `ask_image` is
 # gated even though it is read-only because it uploads image data — possibly
 # photos or clipboard images from outside the workspace — to the vision
-# provider's API.  Derived from each tool's own `@tool(capability=...)`
+# provider's API; `web_search` likewise, because the request it is given
+# goes to the search model's provider and its queries go to Brave.
+# Derived from each tool's own `@tool(capability=...)`
 # declaration rather than hand-maintained here.
 CAPABILITY_MAP = registry.build_capability_map()
 

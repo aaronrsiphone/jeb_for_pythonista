@@ -88,9 +88,19 @@ its own endpoint settings, API key, and a list of available models:
 per-provider keys fall back to sensible defaults. On first run you are
 prompted for a provider name, base URL, models, and auth settings. Each
 provider's API key is stored in the Pythonista keychain, never on disk
-inside your project. Change settings with `:config`, store the current
-provider's key with `:key`, and switch models mid-session with `:model`
-(selection is session-only and is not written back to `config.json`).
+inside your project. Change settings with `:config`, add another provider
+with `:provider add NAME BASE_URL MODEL[,MODEL...]`, ask a provider which
+models it offers with `:provider models [NAME]`, and switch models
+mid-session with `:model` (selection is session-only and is not written
+back to `config.json`).
+
+Keys: `:key` shows which providers have a key stored. `:rotate-key`
+prompts (hidden input) for a new key, stores it and starts using it
+immediately, with no restart — use it when a key expires or when the
+keychain entry has gone missing and requests fail with 401.
+`:rotate-key for NAME` does the same for a provider other than the active
+one (e.g. the vision provider), and `:key clear` forgets the active
+provider's key.
 
 A separate top-level `vision_model` key selects the provider/model pair
 the `ask_image` tool sends images to — format
@@ -98,6 +108,23 @@ the `ask_image` tool sends images to — format
 model name to use the selected provider's endpoint. It is optional; when
 absent, `ask_image` reports that no vision model is configured. Change it
 with `:config set vision_model <provider>/<model-name>`.
+
+### Web search
+
+The `web_search` tool researches a question through a search sub-agent
+that runs up to four Brave Search (LLM Context API) queries and returns a
+short plain-text answer with source URLs. Only the answer reaches the main
+conversation, not the pages it read. Results are ranked toward papers,
+preprints, mathematical references and core library documentation, with
+news and content farms removed. That ranking is a Brave Goggle in
+`tools/web_search.py`, whose docstring explains how to edit it.
+
+Store a Brave key with `:key set brave <key>`. Optionally set
+`:config set search_model <provider>/<model-name>` to run the sub-agent on a
+cheaper model; it defaults to the selected chat model. Requests are limited
+on this side to 2 per second and 2,000 per month, counted in
+`brave_usage.json`. The tool is gated: the first use asks for permission and
+shows the request before it leaves the device.
 
 ### Give the agent standing instructions
 
@@ -233,6 +260,7 @@ MiniAgent keeps its own state **outside** your projects:
     sessions/          # recorded conversations, one JSONL file per session
         <workspace-path-with-dashes>/
             2025-06-07_21-14-03.jsonl
+    brave_usage.json   # Brave Search requests per month, for web_search's quota
     checkpoints/       # per-turn file snapshots for :undo, one dir per workspace
         <workspace-path-with-dashes>/
             <turn-id>/

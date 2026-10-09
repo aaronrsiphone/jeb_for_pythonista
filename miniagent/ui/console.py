@@ -22,6 +22,7 @@ from ..events import (
     ReasoningChunk,
     StepLimitReached,
     ToolCompleted,
+    ToolProgress,
     ToolStarted,
     TurnEnded,
     TurnFailed,
@@ -36,7 +37,7 @@ MAX_DETAIL_CHARS = 10_000
 REASONING_INLINE_LIMIT = 200
 
 # Rule width used by the first (full) permission prompt.
-RULE_WIDTH = 68
+RULE_WIDTH = 60
 
 
 def trunc(value, limit: int = MAX_DETAIL_CHARS) -> str:
@@ -87,7 +88,7 @@ class Console:
         # already read, so it is shown once for the life of the front end.
         self._legend_shown = False
 
-    # -- the renderer seam --------------------------------------------------
+    # -- the renderer seam -------------------------
 
     def handle(self, event):
         """Render *event*; return an answer for it, or ``None``.
@@ -102,6 +103,8 @@ class Console:
             self.on_assistant_text(event)
         elif isinstance(event, ToolStarted):
             self.on_tool_started(event)
+        elif isinstance(event, ToolProgress):
+            self.on_tool_progress(event)
         elif isinstance(event, ToolCompleted):
             self.on_tool_completed(event)
         elif isinstance(event, StepLimitReached):
@@ -114,7 +117,7 @@ class Console:
             return self.on_permission(event)
         return None
 
-    # -- informational events -----------------------------------------------
+    # -- informational event -----------------------
 
     def on_reasoning(self, event):
         text = event.text
@@ -134,6 +137,11 @@ class Console:
         # it completes, so request and result do not cost two lines each.
         pass
 
+    def on_tool_progress(self, event):
+        # Indented under the tool line that will follow, so a long-running
+        # tool (web_search) is visibly alive instead of silent.
+        print(f"  ↳ {event.text}")
+
     def on_tool_completed(self, event):
         comment = str(event.comment or "").strip()
         note = f" — {comment}" if comment else ""
@@ -150,7 +158,7 @@ class Console:
         # Nothing: the final text already arrived as an AssistantText event.
         pass
 
-    # -- the interactive event ----------------------------------------------
+    # -- the interactive event ---------------------
 
     def on_permission(self, event):
         """Show the request, then read and parse an answer."""

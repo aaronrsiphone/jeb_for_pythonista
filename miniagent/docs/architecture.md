@@ -34,7 +34,8 @@ the loop.
         ▼
  agent.py: Agent.turn()  ── generator ──►  events.py
         │  yields ReasoningChunk / AssistantText / ToolStarted /
-        │  PermissionNeeded / ToolCompleted / TurnEnded / TurnFailed
+        │  PermissionNeeded / ToolProgress / ToolCompleted /
+        │  TurnEnded / TurnFailed
         │
         │ each tool call:
         ▼
@@ -76,8 +77,10 @@ used to do inline now lives in its own module. `run()`:
    below) — and passes it into `Workspace(root, checkpoints=checkpoints)` so
    every mutating file operation is snapshotted automatically.
 5. Constructs the rest of the object graph: `Permissions(state_dir, root)`,
-   `Runner(workspace)`, `Vision(config, load_key)`, `Tools(workspace,
-   permissions, runner, vision=vision)`, `Provider(config, api_key)`,
+   `Runner(workspace)`, `Vision(config, load_key)`,
+   `BraveSearch(load_brave_key, state_dir)` and `WebSearch(config, load_key,
+   brave)` for web search, `Tools(workspace, permissions, runner,
+   vision=vision, web=web)`, `Provider(config, api_key)`,
    `SessionLogger(root, state_dir, provider, model)`.
 6. Calls `jebmd.load_jeb_md_context(root)` to discover any `JEB.md` files and
    passes the result to `agent.build_system_prompt()` as `extra_context`.
@@ -141,8 +144,12 @@ answer, receive a reply via `send()`.
 Every turn yields exactly one **terminal event** — `TurnEnded` (a final
 reply, or the step limit was hit) or `TurnFailed` (the provider call failed)
 — so a driver can always tell when a turn is over. The informational events
-are `ReasoningChunk`, `AssistantText`, `ToolStarted`, `ToolCompleted` and
-`StepLimitReached`; the one interactive event is `PermissionNeeded`, which a
+are `ReasoningChunk`, `AssistantText`, `ToolStarted`, `ToolProgress`,
+`ToolCompleted` and `StepLimitReached`. `ToolProgress` comes only from a
+*delegating* tool (one that runs an agent of its own, such as `web_search`)
+and sits between that tool's `ToolStarted` and `ToolCompleted`, so a long
+tool call is visibly alive while every tool call still produces exactly one
+start/complete pair. The one interactive event is `PermissionNeeded`, which a
 driver answers by `send()`-ing a `PermissionAnswer` back into the generator.
 Sending anything else (including `None`, what a renderer sends when it
 cannot ask) is treated as a deny-once.
@@ -261,8 +268,12 @@ call goes through:
    yielded; whatever the driver `send()`s back goes to
    `Permissions.apply_answer()`, which returns `(allowed, comment)`. A denial
    yields `ToolCompleted(..., "denied", ...)` and returns without executing.
-5. Calls the tool's implementation (`spec.func(self, **kwargs)`), catching
-   `WorkspaceError`/`RunnerError`/`KnowledgeError`/`VisionError` and any other
+5. Calls the tool's implementation (`spec.func(self, **kwargs)`). A tool
+   written as a generator function (`ToolSpec.delegates`, detected with
+   `inspect.isgeneratorfunction`) is delegated to with `yield from`
+   instead: its `ToolProgress` events pass straight through to the driver
+   and its return value is the outcome. Either way it catches
+   `WorkspaceError`/`RunnerError`/`KnowledgeError`/`VisionError`/`SearchError` and any other
    exception into a `{"ok": false, "error": ...}` result — nothing raises
    into the model.
 6. Yields `ToolCompleted(name, status, comment, payload)` (`status` is one of
@@ -276,12 +287,15 @@ it only moves files the agent itself created this session
 (`Tools._session_created`) into the recoverable `to_delete/` folder.
 `ask_image` is gated even though it only reads, because it uploads image
 data — possibly photos or clipboard images from outside the workspace — to
-the vision provider's API.
+the vision provider's API. `web_search` is gated for the same reason: the
+request the model writes goes to the search model's provider, and the
+queries the search agent derives from it go to Brave.
 
 ## Permissions (`permissions.py`)
 
 `Permissions` is **policy only** now — it does no I/O and never prompts.
-Five capabilities: `write`, `edit`, `overwrite`, `run_python`, `ask_image`.
+Six capabilities: `write`, `edit`, `overwrite`, `run_python`, `ask_image`,
+`web_search`.
 Decisions are keyed by the canonical project path, so distinct projects have
 distinct policies, and stored at `permissions.json` in the state directory
 — outside any project, so the agent cannot edit its own permission policy
@@ -489,11 +503,40 @@ http(s) URLs, photo-library images and the clipboard image, and returns an
 file-path sources happens in `tools/ask_image.py` before `Vision` ever sees
 the path.
 
+## Web search (`tools/web_search.py`, `websearch.py`, `brave.py`)
+
+`web_search` is a tool that is itself an agent. The calling model sends one
+research request with its context; the tool builds an inner `Agent` with its
+own system prompt (`SEARCH_SYSTEM_PROMPT`) and a one-tool toolset
+(`SearchTools`, exposing `brave_search`), runs a turn, and returns only the
+final answer. The inner agent's history is a separate `Agent`, never
+recorded and never merged into the caller's, so up to four searches' worth
+of extracted page text costs the caller a few hundred characters.
+
+- `SearchTools` duck-types what `Agent` needs (`.schemas` and a generator
+  `.dispatch`) without touching the global registry. Once its search budget
+  is spent, `schemas` returns `[]`; `Provider` then sends no tools and the
+  inner model has to answer with what it found.
+- The tool forwards only `ToolProgress` lines (`search: <query>`) to the
+  caller's event stream; the inner agent's reasoning, text and tool events
+  stay inside.
+- `brave.py` talks to Brave's LLM Context endpoint (pre-extracted page text
+  under a token budget), enforces the account's 2 requests/second and
+  2,000 requests/month on this side, persists the monthly count in
+  `brave_usage.json` in the state directory, and renders responses as
+  plain text rather than JSON (snippets may themselves be JSON).
+- `websearch.py` resolves the inner agent's model from config.json's
+  `search_model` key, falling back to the selected chat model, and builds
+  its `Provider` with that provider's own key.
+- The Brave Goggle that ranks results toward academic sources and drops
+  news and content farms is the `GOGGLE` constant in `tools/web_search.py`,
+  whose module docstring documents Goggle syntax.
+
 ## Configuration (`config.py`)
 
 A single JSON file (`config.json`) in the state directory holds one or more
-named providers plus the current `provider`/`model` selection and an
-optional top-level `vision_model`. `Config.__getattr__` exposes the selected
+named providers plus the current `provider`/`model` selection and optional
+top-level `vision_model` and `search_model` keys. `Config.__getattr__` exposes the selected
 provider's settings as plain attributes (`config.base_url`, ...), so
 `Provider` is built from a `Config` without knowing about the multi-provider
 layout. `select()` changes the selection in memory (`:model`); `set()`
@@ -523,6 +566,9 @@ console loop or the agent — split out of `app.py` for the same reason as
 `jebmd.py`. Keys are stored per provider (`MiniAgent:provider:<name>`);
 `_load_api_key(config, provider)` can load any configured provider's key,
 not just the selected one, which is how `Vision` loads its own provider's
-key independently of the main chat provider. A legacy hash-of-base-URL entry
+key independently of the main chat provider. The Brave Search key is not a
+chat provider's, so it has its own keychain service (`MiniAgent:brave`) and
+its own environment fallback (`BRAVE_API_KEY`), via `load_brave_key()` /
+`store_brave_key()`. A legacy hash-of-base-URL entry
 is migrated to the per-provider scheme automatically the first time that
 provider is used.

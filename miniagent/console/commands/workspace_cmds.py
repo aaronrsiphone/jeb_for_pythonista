@@ -77,10 +77,10 @@ def _print_jeb_context(root: Path):
 
     print()
     print("Combined context sent to the system prompt:")
-    print("-" * 68)
+    print("-" * 49)
     context = jebmd.load_jeb_md_context(root)
     if context:
         print(context)
     else:
         print("(empty)")
-    print("-" * 68)
+    print("-" * 49)

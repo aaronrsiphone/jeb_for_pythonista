@@ -164,7 +164,7 @@ check("every CAPABILITY_MAP value is a real capability",
 check("CAPABILITY_MAP values are the capability constants",
       sorted(set(CAPABILITY_MAP.values())),
       sorted({perms.ASK_IMAGE, perms.EDIT, perms.OVERWRITE,
-              perms.RUN_PYTHON, perms.WRITE}))
+              perms.RUN_PYTHON, perms.WEB_SEARCH, perms.WRITE}))
 check("permissions.CAPABILITIES has no duplicates",
       len(perms.CAPABILITIES), len(set(perms.CAPABILITIES)))
 # decide() refuses anything outside CAPABILITIES, so a capability that is

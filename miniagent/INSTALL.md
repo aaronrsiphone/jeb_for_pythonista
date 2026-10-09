@@ -48,6 +48,8 @@ site-packages/
         runner.py
         sessions.py
         vision.py
+        websearch.py
+        brave.py
         workspace.py
         knowledge.py
         gendocs.py
@@ -69,6 +71,7 @@ site-packages/
             run_python.py
             ask_image.py
             knowledge.py
+            web_search.py
         console/
             __init__.py
             loop.py
@@ -170,21 +173,41 @@ projects, in an application-state directory derived at runtime.  It prefers:
     permissions.json
     sessions/
     checkpoints/
+    brave_usage.json
 ```
 
 falling back to `~/.miniagent/` and then a temp directory.  `sessions/`
 holds the recorded conversation logs (`:resume`) for every workspace, one
 JSONL file per session.  `checkpoints/` holds the per-turn file snapshots
-`:undo` restores from, also one directory per workspace.  The API key is
+`:undo` restores from, also one directory per workspace.
+`brave_usage.json` counts Brave Search requests per calendar month, so the
+`web_search` tool stops before the account's monthly quota.  The API key is
 stored in the Pythonista keychain, never in a JSON file.  You can set it from
 the MiniAgent console with:
 
 ```
-:key set sk-your-key-here
+:rotate-key
+```
+
+which prompts for the key with hidden input, stores it and uses it at once
+(also the way to recover if the keychain entry is ever missing).
+
+The `web_search` tool needs a Brave Search API key with access to the LLM
+Context endpoint, stored in the keychain with:
+
+```
+:key set brave your-brave-key
+```
+
+Optionally point its search agent at a cheaper model (by default it uses the
+selected chat model):
+
+```
+:config set search_model <provider>/<model-name>
 ```
 
 ## Updating
 
 To update, just overwrite the `miniagent/` directory in site-packages with the
-new version.  Your `config.json`, `permissions.json`, and keychain key are
-untouched.
+new version.  Your `config.json`, `permissions.json`, `brave_usage.json`
+and keychain keys are untouched.

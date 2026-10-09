@@ -34,8 +34,9 @@ EDIT = "edit"
 OVERWRITE = "overwrite"
 RUN_PYTHON = "run_python"
 ASK_IMAGE = "ask_image"
+WEB_SEARCH = "web_search"
 
-CAPABILITIES = (WRITE, EDIT, OVERWRITE, RUN_PYTHON, ASK_IMAGE)
+CAPABILITIES = (WRITE, EDIT, OVERWRITE, RUN_PYTHON, ASK_IMAGE, WEB_SEARCH)
 
 # Internal decision tokens.  The user-facing prompt uses single-letter
 # choices (y/s/a/n/d/x) that mirror the original jeb.py.

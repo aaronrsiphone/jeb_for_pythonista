@@ -220,7 +220,7 @@ nothing else to keep in sync:
    ```
 
    Pass `capability=perm.WRITE` (or `EDIT`/`OVERWRITE`/`RUN_PYTHON`/
-   `ASK_IMAGE`, or a new constant you add to `CAPABILITIES` in
+   `ASK_IMAGE`/`WEB_SEARCH`, or a new constant you add to `CAPABILITIES` in
    `permissions.py`) to `@tool(...)` if the tool mutates state, executes
    code, or leaves the workspace (uploads, network). Leave it out for a
    read-only tool.
@@ -240,6 +240,27 @@ nothing else to keep in sync:
    ```python
    from .your_tool import your_tool  # noqa: F401
    ```
+
+Never put `from __future__ import annotations` in a tool module. It turns
+annotations into strings, and the registry then silently types every
+parameter as `string`.
+
+#### A tool that runs for a while, or runs its own agent
+
+Write the function as a generator: `yield` `ToolProgress(name, text)` events
+while it works and `return` the outcome dict. The registry detects this
+(`ToolSpec.delegates`) and `Tools.dispatch` delegates to it with
+`yield from`, so the progress lines reach the renderer as they happen.
+Yield only `ToolProgress` — never `ToolStarted`/`ToolCompleted` — so the
+caller still sees exactly one start/complete pair per tool call.
+
+`tools/web_search.py` is the worked example: it runs an inner `Agent` whose
+tools object only has to provide `.schemas` and a generator `.dispatch`,
+and forwards one progress line per search. To get that module object in a
+test, use `importlib.import_module("miniagent.tools.web_search")`. The
+package re-exports each tool under its module's name, so
+`from miniagent.tools import web_search` returns the `ToolSpec`, not the
+module.
 
 4. Delegate the real work to `Workspace`/`Runner`/`Vision` or a new
    collaborator — do not put file I/O directly in the tool function.
