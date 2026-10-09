@@ -45,7 +45,7 @@ from urllib.parse import urlparse
 # Defaults for each provider entry.  Unspecified keys in a provider's
 # settings fall back to these values.
 PROVIDER_DEFAULTS = {
-    "base_url": "",
+    "base_url": "https://api.mistral.ai/v1",
     "chat_path": "chat/completions",
     "models": [],          # model ids available from this provider
     "model": "",           # last model used with this provider
@@ -189,6 +189,11 @@ def _normalize_providers(raw) -> dict:
             merged["model"] = ""
         if not merged["model"] and merged["models"]:
             merged["model"] = merged["models"][0]
+        for key in ("base_url", "chat_path"):
+            if isinstance(merged.get(key), str):
+                merged[key] = merged[key].strip()
+        if not merged.get("chat_path"):
+            merged["chat_path"] = PROVIDER_DEFAULTS["chat_path"]
         if not isinstance(merged.get("extra_headers"), dict):
             merged["extra_headers"] = {}
         if not isinstance(merged.get("extra_body"), dict):
@@ -422,6 +427,53 @@ class Config:
         providers[provider]["model"] = model
         self._data["provider"] = provider
         self._data["model"] = model
+
+    def add_provider(self, name: str, base_url: str, models=()):
+        """Add (or update the endpoint/models of) a provider and save.
+
+        Existing settings of a provider with the same name are kept; only
+        ``base_url`` is replaced and *models* are merged in.  The first
+        provider ever added becomes the selection.
+        """
+        name = str(name or "").strip()
+        if not name or any(ch.isspace() or ch == "/" for ch in name):
+            raise ValueError("provider name must be one word without '/'")
+        base_url = str(base_url or "").strip().rstrip("/")
+        parts = urlparse(base_url)
+        if parts.scheme not in ("http", "https") or not parts.netloc:
+            raise ValueError(
+                f"base_url must look like https://host.example/v1, got {base_url!r}"
+            )
+        providers = self._data["providers"]
+        settings = providers.get(name)
+        if settings is None:
+            settings = dict(PROVIDER_DEFAULTS)
+            settings["models"] = []
+            settings["extra_headers"] = {}
+            settings["extra_body"] = {}
+            providers[name] = settings
+        settings["base_url"] = base_url
+        for model in models:
+            model = str(model).strip()
+            if model and model not in settings["models"]:
+                settings["models"].append(model)
+        if not settings.get("model") and settings["models"]:
+            settings["model"] = settings["models"][0]
+        if not self._data["provider"]:
+            self._data["provider"] = name
+            self._data["model"] = settings.get("model", "")
+        self.save()
+
+    def remove_provider(self, name: str):
+        """Remove a provider that is not currently selected, and save."""
+        if name not in self._data["providers"]:
+            raise KeyError(f"Unknown provider: {name}")
+        if name == self._data["provider"]:
+            raise ValueError(
+                f"{name} is the active provider; switch with :model first"
+            )
+        del self._data["providers"][name]
+        self.save()
 
     def set(self, key: str, value):
         if key == "provider":

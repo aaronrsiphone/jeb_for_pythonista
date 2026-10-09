@@ -88,9 +88,19 @@ its own endpoint settings, API key, and a list of available models:
 per-provider keys fall back to sensible defaults. On first run you are
 prompted for a provider name, base URL, models, and auth settings. Each
 provider's API key is stored in the Pythonista keychain, never on disk
-inside your project. Change settings with `:config`, store the current
-provider's key with `:key`, and switch models mid-session with `:model`
-(selection is session-only and is not written back to `config.json`).
+inside your project. Change settings with `:config`, add another provider
+with `:provider add NAME BASE_URL MODEL[,MODEL...]`, ask a provider which
+models it offers with `:provider models [NAME]`, and switch models
+mid-session with `:model` (selection is session-only and is not written
+back to `config.json`).
+
+Keys: `:key` shows which providers have a key stored. `:rotate-key`
+prompts (hidden input) for a new key, stores it and starts using it
+immediately, with no restart — use it when a key expires or when the
+keychain entry has gone missing and requests fail with 401.
+`:rotate-key for NAME` does the same for a provider other than the active
+one (e.g. the vision provider), and `:key clear` forgets the active
+provider's key.
 
 A separate top-level `vision_model` key selects the provider/model pair
 the `ask_image` tool sends images to — format

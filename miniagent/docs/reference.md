@@ -35,7 +35,7 @@ currently exists*, read straight from the code.
 | `ask_image` | ask_image | Ask the configured vision model a question about one or more images. Image sources, in the order sent: 'images' (workspace-relative file paths and/or http(s) image URLs), 'photo' (iOS photo-library image index; negative counts from the end, so -1 is the most recent photo), and/or 'clipboard' (the image currently on the clipboard). The image data is uploaded to the vision provider's API (config.json 'vision_model', format '<provider>/<model-name>'). Oversized images are automatically shrunk and re-encoded as JPEG. Returns the model's answer plus token usage. |
 | `knowledge` | none | Read-only access to this install's Pythonista reference material; no permission required. Actions: 'list' (index the files under the optional, user-populated miniagent/knowledge/ directory, if present), 'read' (line-numbered contents of one such file), 'search' (literal or regex across those files), 'docs' (offline search of Pythonista's bundled official documentation: 'query' returns ranked symbol matches, 'page' returns a doc page's readable text, no arguments lists the Pythonista module doc pages). 'list'/'read'/'search' report a clear error when the knowledge directory is absent; 'docs' is independent of it and always works. No action writes files or executes code. Knowledge paths are relative to the knowledge root and cannot escape it. |
 
-## Commands (16)
+## Commands (18)
 
 | Command | Aliases | Summary |
 |---|---|---|
@@ -46,7 +46,9 @@ currently exists*, read straight from the code.
 | `:undo` | — | Restore every file the last turn touched to its state from before that turn (a create_file is undone by deleting the file it created). |
 | `:checkpoints` | — | List the retained undo groups (newest first): turn id, timestamp and the files each one touched. |
 | `:config` | — | Print provider configuration. |
-| `:key` | — | Show whether an API key is stored. |
+| `:key` | — | Show which providers have an API key stored. |
+| `:rotate-key` | `:rekey` | Replace or re-enter an API key without restarting. |
+| `:provider` | `:providers` | List configured providers and their endpoints. |
 | `:model` | `:models` | List every configured model as <provider>/<model-name>, numbered, and select one to use for the current session (selection is not persisted). |
 | `:effort` | — | Set reasoning effort level sent as reasoning_effort. |
 | `:verbose` | — | Switch the front end between the compact console renderer (the default: collapsed reasoning, one line per tool call, the permission legend shown once) and the verbose one (full reasoning, separate tool request/result lines, the legend on every prompt). |

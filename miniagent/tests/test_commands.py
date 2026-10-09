@@ -3,8 +3,10 @@
 Drives every handler directly against a Context built over temp
 directories, with a stub Agent/Provider so no network is ever touched.
 builtins.input is stubbed only for the handlers that genuinely prompt
-(:model bare, :clear-perms, :undo with something to undo). No console
-loop is started here beyond two focused checks of loop dispatch itself
+(:model bare, :clear-perms, :undo with something to undo), and
+console.secure_input likewise for :rotate-key's hidden key prompt. No
+console loop is started here beyond two focused checks of loop dispatch
+itself
 (unknown command, clean :quit) — a fuller end-to-end drive of the loop is
 covered separately, outside the checked-in suite, per the rearchitecture
 plan's verification steps. Lives permanently in miniagent/tests/; run it
@@ -18,6 +20,16 @@ import shutil
 import sys
 import tempfile
 from pathlib import Path
+
+# Pythonista's built-in console module (not miniagent.console): the seam
+# keys._secure_input uses for hidden input, stubbed by with_secure_input.
+try:
+    import console as _pyista_console
+except ImportError:  # off-device: provide a stand-in the stub can patch
+    import types
+    _pyista_console = types.ModuleType("console")
+    _pyista_console.secure_input = lambda prompt="": ""
+    sys.modules["console"] = _pyista_console
 
 # Re-import the package fresh so the current (edited) source is exercised.
 # The runner's post-run purge removes these modules again afterwards.
@@ -110,6 +122,28 @@ def with_input(fake, fn):
         builtins.input = original
 
 
+def with_secure_input(fake, fn):
+    """Run fn() with Pythonista's console.secure_input replaced by *fake*.
+
+    :rotate-key prompts for the new key through keys._secure_input, which
+    prefers console.secure_input over builtins.input, so stubbing input()
+    alone cannot script it.  Patches the same module attribute the real
+    prompt reads, the way with_input patches builtins.input, and restores
+    it afterwards.  *fake* is a ScriptedInput like any other.
+    """
+    if _pyista_console is None:  # pragma: no cover - not on Pythonista
+        return fn()
+    original = getattr(_pyista_console, "secure_input", None)
+    _pyista_console.secure_input = fake
+    try:
+        return fn()
+    finally:
+        if original is None:  # pragma: no cover - defensive
+            del _pyista_console.secure_input
+        else:
+            _pyista_console.secure_input = original
+
+
 def capture(fn):
     """Run fn(), returning (result, printed-stdout)."""
     buffer = io.StringIO()
@@ -181,12 +215,18 @@ try:
     check("expected canonical command names present",
           sorted(s.name for s in specs),
           sorted(["help", "quit", "reset", "resume", "undo", "checkpoints",
-                  "config", "key", "model", "effort", "verbose", "perms",
-                  "clear-perms", "files", "workspace", "context"]))
+                  "config", "key", "rotate-key", "provider", "model",
+                  "effort",
+                  "verbose", "perms", "clear-perms", "files", "workspace",
+                  "context"]))
 
     for spec in specs:
         def run_it(spec=spec):
-            return spec(ctx, "")
+            # One scripted hidden-input answer per dispatch: only
+            # :rotate-key prompts securely (a blank answer cancels), and
+            # the stub raises if anything else ever prompts invisibly.
+            return with_secure_input(
+                ScriptedInput([""]), lambda: spec(ctx, ""))
         try:
             with_input(ScriptedInput(["", "", "", ""]), lambda: capture(run_it))
         except Exception as exc:  # pragma: no cover - failure path
@@ -202,6 +242,8 @@ try:
           get_spec("exit") is get_spec("quit"), True)
     check("':models' resolves to the :model spec",
           get_spec("models") is get_spec("model"), True)
+    check("':rekey' resolves to the :rotate-key spec",
+          get_spec("rekey") is get_spec("rotate-key"), True)
     check("unregistered word resolves to nothing", get_spec("nope"), None)
 
     # --- :help is generated and mentions every registered command -----------
@@ -251,6 +293,117 @@ try:
     _, out = capture(lambda: get_spec("key")(ctx, "set s3cr3t"))
     check("':key set' reports success",
           ("keychain" in out or "environment" in out), True)
+
+    # :rotate-key — rotation, not just storage.  Provider snapshots api_key
+    # at construction, so both `:key set` above and :rotate-key swap the
+    # running provider over in place, the same way :effort mutates
+    # ctx.provider.effort.
+    secure_blank = ScriptedInput([""])
+    _, out = with_secure_input(
+        secure_blank, lambda: capture(lambda: get_spec("rotate-key")(ctx, "")))
+    check("bare ':rotate-key' with a blank answer cancels",
+          ("Key rotation cancelled" in out, ctx.provider.api_key),
+          (True, "s3cr3t"))
+    prompted_provA = any("provA" in p for p in secure_blank.prompts)
+    check("bare ':rotate-key' prompted securely for the current provider",
+          (len(secure_blank.prompts), prompted_provA), (1, True))
+
+    _, out = with_secure_input(
+        ScriptedInput(["rotated-key-1"]),
+        lambda: capture(lambda: get_spec("rotate-key")(ctx, "")))
+    check("':rotate-key' hot-swaps the new key into the live provider",
+          ctx.provider.api_key, "rotated-key-1")
+    check("':rotate-key' confirms storage and session activation",
+          ("keychain" in out or "environment" in out)
+          and "active in this session" in out, True)
+
+    secure_silent = ScriptedInput(["would-have-prompted"])
+    _, out = with_secure_input(
+        secure_silent,
+        lambda: capture(lambda: get_spec("rotate-key")(ctx, "inline-key")))
+    check("':rotate-key VALUE' stores the inline value without prompting",
+          (ctx.provider.api_key, len(secure_silent.prompts)),
+          ("inline-key", 0))
+
+    # :key set hot-swaps too; :key clear forgets and deactivates.
+    capture(lambda: get_spec("key")(ctx, "set via-key-set"))
+    check("':key set' also activates the key in the live session",
+          ctx.provider.api_key, "via-key-set")
+    _, out = capture(lambda: get_spec("key")(ctx, "clear"))
+    check("':key clear' drops the live key and points at :rotate-key",
+          (ctx.provider.api_key, ":rotate-key" in out), ("", True))
+
+    # Recovery from a missing key: :rotate-key works with nothing stored.
+    with_secure_input(
+        ScriptedInput(["recovered"]),
+        lambda: capture(lambda: get_spec("rotate-key")(ctx, "")))
+    check("':rotate-key' recovers a session whose key is missing",
+          ctx.provider.api_key, "recovered")
+
+    # :rotate-key for OTHER stores without touching the live provider.
+    other_prompt = ScriptedInput(["other-key"])
+    _, out = with_secure_input(
+        other_prompt,
+        lambda: capture(lambda: get_spec("rotate-key")(ctx, "for provB")))
+    check("':rotate-key for provB' prompts for provB, live key untouched",
+          (any("provB" in p for p in other_prompt.prompts),
+           ctx.provider.api_key), (True, "recovered"))
+    _, out = capture(lambda: get_spec("rotate-key")(ctx, "for nope"))
+    check("':rotate-key for <unknown>' is rejected", "Unknown provider" in out, True)
+
+    # :provider add / remove, and a clear error for a broken endpoint.
+    _, out = capture(lambda: get_spec("provider")(
+        ctx, "add provC https://c.example/v1 c1,c2"))
+    check("':provider add' adds a provider with its models",
+          ctx.config.providers["provC"]["models"], ["c1", "c2"])
+    check("added provider's models show up for :model",
+          ("provC", "c2") in ctx.config.model_entries(), True)
+    _, out = capture(lambda: get_spec("provider")(ctx, "add bad not-a-url m"))
+    check("':provider add' rejects a URL without a scheme",
+          ("error" in out, "bad" in ctx.config.providers), (True, False))
+    _, out = capture(lambda: get_spec("provider")(ctx, "remove provC"))
+    check("':provider remove' removes it", "provC" in ctx.config.providers, False)
+    _, out = capture(lambda: get_spec("provider")(
+        ctx, "remove " + ctx.config.provider))
+    check("the active provider cannot be removed", "error" in out, True)
+
+    # :provider models — GET <base_url>/models, with requests stubbed.
+    import miniagent.provider as _prov_mod
+
+    class _Resp:
+        status_code = 200
+        text = ""
+        def json(self):
+            return {"data": [{"id": "zz"}, {"id": "m1"}]}
+    seen = {}
+    real_get = _prov_mod.requests.get
+    _prov_mod.requests.get = lambda url, **kw: (seen.update(url=url, **kw), _Resp())[1]
+    try:
+        _, out = capture(lambda: get_spec("provider")(ctx, "models provA"))
+    finally:
+        _prov_mod.requests.get = real_get
+    check("':provider models' calls <base_url>/models",
+          seen.get("url"), "https://a.example/v1/models")
+    check("':provider models' lists ids and marks configured ones",
+          ("* m1" in out, "  zz" in out), (True, True))
+    _, out = capture(lambda: get_spec("provider")(ctx, "models nope"))
+    check("':provider models <unknown>' is rejected", "Unknown provider" in out, True)
+
+    class _Blank:
+        provider = "px"; path = "/x/config.json"; base_url = ""
+    try:
+        Provider(_Blank(), "k").chat([])
+        msg = ""
+    except Exception as exc:
+        msg = str(exc)
+    check("a blank base_url fails with an actionable message, not 'Invalid URL'",
+          ("'px' has no base_url" in msg, ":config set base_url" in msg),
+          (True, True))
+    saved_url = ctx.config.base_url
+    capture(lambda: get_spec("config")(ctx, "set base_url https://new.example/v1"))
+    check("':config set base_url' applies to the live provider",
+          ctx.provider._url(), "https://new.example/v1/chat/completions")
+    capture(lambda: get_spec("config")(ctx, "set base_url " + saved_url))
 
     # :effort / :effort high
     _, out = capture(lambda: get_spec("effort")(ctx, ""))

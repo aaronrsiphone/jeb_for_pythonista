@@ -36,7 +36,7 @@ MAX_DETAIL_CHARS = 10_000
 REASONING_INLINE_LIMIT = 200
 
 # Rule width used by the first (full) permission prompt.
-RULE_WIDTH = 68
+RULE_WIDTH = 60
 
 
 def trunc(value, limit: int = MAX_DETAIL_CHARS) -> str:
@@ -87,7 +87,7 @@ class Console:
         # already read, so it is shown once for the life of the front end.
         self._legend_shown = False
 
-    # -- the renderer seam --------------------------------------------------
+    # -- the renderer seam -------------------------
 
     def handle(self, event):
         """Render *event*; return an answer for it, or ``None``.
@@ -114,7 +114,7 @@ class Console:
             return self.on_permission(event)
         return None
 
-    # -- informational events -----------------------------------------------
+    # -- informational event -----------------------
 
     def on_reasoning(self, event):
         text = event.text
@@ -150,7 +150,7 @@ class Console:
         # Nothing: the final text already arrived as an AssistantText event.
         pass
 
-    # -- the interactive event ----------------------------------------------
+    # -- the interactive event ---------------------
 
     def on_permission(self, event):
         """Show the request, then read and parse an answer."""

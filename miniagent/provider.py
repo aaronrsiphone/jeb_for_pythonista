@@ -6,6 +6,8 @@ that implements the common OpenAI-compatible tool-calling wire format.
 
 from __future__ import annotations
 
+from urllib.parse import urlparse
+
 import requests
 
 
@@ -37,12 +39,62 @@ def _text_from_parts(value) -> str:
     return ""
 
 
+def list_models(settings: dict, api_key: str = "") -> list:
+    """GET ``<base_url>/models`` for one provider's settings; return ids.
+
+    Works on the OpenAI-compatible shape ``{"data": [{"id": ...}]}`` and on
+    a bare list of ids/objects.  ``models_path`` in the settings overrides
+    the default ``models`` path.
+    """
+    base = str(settings.get("base_url") or "").strip().rstrip("/")
+    parts = urlparse(base)
+    if parts.scheme not in ("http", "https") or not parts.netloc:
+        raise ProviderError(f"invalid base_url {base!r}")
+    path = str(settings.get("models_path") or "models").strip().lstrip("/")
+    url = f"{base}/{path}"
+    headers = {}
+    if settings.get("auth_enabled", True) and api_key:
+        name = settings.get("auth_header") or "Authorization"
+        headers[name] = f"{settings.get('auth_prefix', 'Bearer ') or ''}{api_key}"
+    headers.update(settings.get("extra_headers") or {})
+    try:
+        resp = requests.get(url, headers=headers,
+                            timeout=min(int(settings.get("timeout") or 30), 30))
+    except requests.RequestException as exc:
+        raise ProviderError(f"Request failed: {exc}") from exc
+    if resp.status_code >= 400:
+        hint = ""
+        if resp.status_code in (401, 403):
+            hint = "\nCheck the API key (:rotate-key)."
+        raise ProviderError(
+            f"HTTP {resp.status_code} from {url}:\n{resp.text[:1000]}{hint}")
+    try:
+        payload = resp.json()
+    except ValueError as exc:
+        raise ProviderError(f"Invalid JSON from {url}: {exc}") from exc
+    items = payload
+    if isinstance(payload, dict):
+        items = payload.get("data", payload.get("models", []))
+    ids = []
+    for item in items if isinstance(items, list) else []:
+        mid = item if isinstance(item, str) else (
+            item.get("id") or item.get("name") if isinstance(item, dict) else None)
+        if isinstance(mid, str) and mid and mid not in ids:
+            ids.append(mid)
+    return sorted(ids)
+
+
 class Provider:
     """Thin HTTP client for an OpenAI-compatible chat completions endpoint."""
 
     def __init__(self, config, api_key: str = ""):
-        self.base_url = getattr(config, "base_url", "")
-        self.chat_path = getattr(config, "chat_path", "chat/completions")
+        self.base_url = str(getattr(config, "base_url", "") or "").strip()
+        self.chat_path = str(
+            getattr(config, "chat_path", "") or "chat/completions"
+        ).strip()
+        # Only used to make error messages actionable.
+        self.name = str(getattr(config, "provider", "") or "")
+        self.config_path = str(getattr(config, "path", "") or "")
         self.model = getattr(config, "model", "")
         self.auth_enabled = getattr(config, "auth_enabled", True)
         self.auth_header = getattr(config, "auth_header", "Authorization")
@@ -54,12 +106,33 @@ class Provider:
         # reasoning_effort is not persisted; callers set it at runtime.
         self.effort = None
 
-    # -- request building ---------------------------------------------------
+    # -- request building --------------------------
 
     def _url(self) -> str:
         base = self.base_url.rstrip("/")
         path = self.chat_path.lstrip("/")
         return f"{base}/{path}"
+
+    def endpoint_problem(self) -> str:
+        """Return why the endpoint is unusable, or "" when it looks fine.
+
+        Catches a blank or scheme-less ``base_url`` here, with the provider
+        name and config file in the message, instead of letting ``requests``
+        report a bare "Invalid URL '/chat/completions'".
+        """
+        who = f"provider {self.name!r}" if self.name else "the selected provider"
+        where = f" in {self.config_path}" if self.config_path else ""
+        if not self.base_url:
+            problem = f"{who} has no base_url"
+        else:
+            parts = urlparse(self.base_url)
+            if parts.scheme in ("http", "https") and parts.netloc:
+                return ""
+            problem = (f"{who} has an invalid base_url {self.base_url!r} "
+                       "(expected something like https://host.example/v1)")
+        return (f"{problem}{where}. Fix it with "
+                "':config set base_url https://host.example/v1' "
+                "(':config' shows what is loaded).")
 
     def _headers(self) -> dict:
         headers = {"Content-Type": "application/json"}
@@ -88,9 +161,12 @@ class Provider:
         body.update(self.extra_body)
         return body
 
-    # -- public -------------------------------------------------------------
+    # -- public ------------------------------------
 
     def chat(self, messages: list, tools=None, tool_choice=None) -> dict:
+        problem = self.endpoint_problem()
+        if problem:
+            raise ProviderError(problem)
         url = self._url()
         headers = self._headers()
         body = self._body(messages, tools, tool_choice)
@@ -103,8 +179,17 @@ class Provider:
 
         if resp.status_code >= 400:
             snippet = resp.text[:4000]
+            hint = ""
+            if resp.status_code in (401, 403) and self.auth_enabled:
+                hint = (
+                    "\nNo API key is loaded for this provider; run "
+                    ":rotate-key to enter one."
+                    if not self.api_key else
+                    "\nThe API key was rejected; run :rotate-key to "
+                    "replace it (takes effect immediately)."
+                )
             raise ProviderError(
-                f"HTTP {resp.status_code} from {url}:\n{snippet}"
+                f"HTTP {resp.status_code} from {url}:\n{snippet}{hint}"
             )
 
         try:
@@ -161,7 +246,7 @@ class Provider:
                 texts.append(_text_from_parts(block["text"]))
         return _join_nonempty(texts), _join_nonempty(thoughts)
 
-    # -- reasoning effort ---------------------------------------------------
+    # -- reasoning effort --------------------------
 
     def set_effort(self, level) -> bool:
         """Set reasoning effort.  None clears it.  Returns True if valid."""

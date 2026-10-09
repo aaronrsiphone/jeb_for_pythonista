@@ -67,6 +67,12 @@ def run(project_root):
     vision = Vision(config, load_key=lambda name: _load_api_key(config, name))
     tools = Tools(workspace, permissions, runner, vision=vision)
     provider = Provider(config, api_key)
+    problem = provider.endpoint_problem()
+    if problem:
+        # Say so up front, naming the files actually in use, rather than
+        # letting the first prompt die with a bare "Invalid URL".
+        print(f"WARNING: {problem}")
+        print(f"  (config file: {config.path}; code: {Path(__file__).parent})")
     session_logger = SessionLogger(
         root,
         state_dir=state_dir,

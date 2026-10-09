@@ -40,7 +40,7 @@ class Headless:
         self.events = []
         self._answers = list(answers or [])
 
-    # -- the renderer seam --------------------------------------------------
+    # -- the renderer seam -------------------------
 
     def handle(self, event):
         self.events.append(event)
@@ -58,7 +58,7 @@ class Headless:
         # has no one to re-prompt, so that also becomes a deny-once.
         return Permissions.parse_answer(raw)
 
-    # -- accessors for tests ------------------------------------------------
+    # -- accessors for tests -----------------------
 
     @property
     def answers_left(self) -> int:

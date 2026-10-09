@@ -52,7 +52,8 @@ def _load_api_key(config: Config, provider: str | None = None) -> str:
     name = provider if provider else config.provider
     kc = _get_keychain()
     if kc is None:
-        return os.environ.get("MINIAGENT_API_KEY", "")
+        return (os.environ.get(_env_name(name))
+                or os.environ.get("MINIAGENT_API_KEY", ""))
     service = _provider_service(name)
     try:
         key = kc.get_password(service, KEYCHAIN_ACCOUNT) or ""
@@ -73,20 +74,67 @@ def _load_api_key(config: Config, provider: str | None = None) -> str:
             kc.set_password(service, KEYCHAIN_ACCOUNT, legacy_key)
         except Exception:
             pass
-    return legacy_key
+        return legacy_key
+    # Last resort: a key that _store_api_key could not write to the
+    # keychain (it failed) is held in the environment for this process.
+    return os.environ.get(_env_name(name), "")
 
 
-def _store_api_key(config: Config, value: str):
+def _env_name(provider: str) -> str:
+    """Environment fallback variable for one provider's key."""
+    safe = "".join(ch if ch.isalnum() else "_" for ch in provider or "").upper()
+    return f"MINIAGENT_API_KEY_{safe}" if safe else "MINIAGENT_API_KEY"
+
+
+def _store_api_key(config: Config, value: str, provider: str | None = None):
+    """Store *value* as the key for *provider* (default: the selected one).
+
+    Returns True when it went into the keychain.  When there is no keychain,
+    or the keychain write fails, the key is kept in the environment for the
+    rest of this process instead (and False is returned) so it is never
+    silently lost.
+    """
+    name = provider if provider else config.provider
     kc = _get_keychain()
     if kc is None:
-        os.environ["MINIAGENT_API_KEY"] = value
+        os.environ[_env_name(name)] = value
         return False
-    service = _provider_service(config.provider)
     try:
-        kc.set_password(service, KEYCHAIN_ACCOUNT, value)
+        kc.set_password(_provider_service(name), KEYCHAIN_ACCOUNT, value)
+        os.environ.pop(_env_name(name), None)
         return True
     except Exception:
+        os.environ[_env_name(name)] = value
         return False
+
+
+def _delete_api_key(config: Config, provider: str | None = None) -> bool:
+    """Forget the stored key for *provider* (default: the selected one).
+
+    Removes the per-provider entry, the legacy base-URL-hash entry for the
+    same endpoint (otherwise _load_api_key would migrate it straight back)
+    and any environment fallback.  Returns True if anything was removed.
+    """
+    name = provider if provider else config.provider
+    removed = False
+    for var in (_env_name(name),):
+        if os.environ.pop(var, None):
+            removed = True
+    kc = _get_keychain()
+    if kc is None:
+        if os.environ.pop("MINIAGENT_API_KEY", None):
+            removed = True
+        return removed
+    settings = (getattr(config, "providers", {}) or {}).get(name) or {}
+    base_url = settings.get("base_url") or ""
+    for service in (_provider_service(name), _keychain_service(base_url)):
+        try:
+            if kc.get_password(service, KEYCHAIN_ACCOUNT):
+                kc.delete_password(service, KEYCHAIN_ACCOUNT)
+                removed = True
+        except Exception:
+            pass
+    return removed
 
 
 def _secure_input(prompt: str) -> str:
@@ -127,11 +175,12 @@ def _ensure_api_key(config: Config) -> str:
 
     if not value:
         print("WARNING: no API key provided; requests will be unauthenticated.")
+        print("Run :rotate-key at any time to enter one without restarting.")
         return ""
 
     stored = _store_api_key(config, value)
     if stored:
         print("API key stored in keychain.")
     else:
-        print("API key stored in environment (keychain unavailable).")
+        print("API key kept in memory for this run only (keychain unavailable).")
     return value

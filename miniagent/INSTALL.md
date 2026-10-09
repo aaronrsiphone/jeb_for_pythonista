@@ -180,8 +180,11 @@ stored in the Pythonista keychain, never in a JSON file.  You can set it from
 the MiniAgent console with:
 
 ```
-:key set sk-your-key-here
+:rotate-key
 ```
+
+which prompts for the key with hidden input, stores it and uses it at once
+(also the way to recover if the keychain entry is ever missing).
 
 ## Updating
 

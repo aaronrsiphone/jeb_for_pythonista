@@ -165,7 +165,7 @@ class SessionLogger:
         self._session_id = None   # current file stem; None = not started yet
         self._broken = False      # True once recording has failed
 
-    # -- introspection ---------------------------------------------------
+    # -- introspection -----------------------------
 
     @property
     def active_id(self):
@@ -176,7 +176,7 @@ class SessionLogger:
         """File path of the session with *session_id* (its stem)."""
         return self.sessions_dir / (session_id + SESSION_SUFFIX)
 
-    # -- recording ---------------------------------------------------------
+    # -- recording ---------------------------------
 
     def record(self, message):
         """Append one conversation message to the current session file.
@@ -234,8 +234,7 @@ class SessionLogger:
         self._broken = True
         print(f"Session logging disabled: {exc}")
 
-    # -- listing / loading -------------------------------------------------
-
+    # -- listing / loading -------------------------
     def list_sessions(self):
         """Summaries of every recorded session, most recent activity first.
 
@@ -335,9 +334,9 @@ class SessionLogger:
         return path
 
 
-# ---------------------------------------------------
+# --------------------------------------------------
 # helpers
-# ---------------------------------------------------
+# --------------------------------------------------
 
 def _now_iso() -> str:
     return time.strftime("%Y-%m-%dT%H:%M:%S")
