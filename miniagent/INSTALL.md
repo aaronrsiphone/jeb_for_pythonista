@@ -148,6 +148,11 @@ if __name__ == "__main__":
 Running `jeb.py` starts an interactive MiniAgent console scoped to
 `SomeProject/`.
 
+To limit the tools the agent sees in that project, pass `tools` (an
+allowlist) and/or `exclude_tools` to `run()`, for example
+`run(project_root=..., exclude_tools=["run_python"])`. See README.md's
+"Limiting tools" section.
+
 Alternatively, copy `miniagent/_jeb.py` from the installed package to
 `jeb.py` in your project instead of typing it out:
 

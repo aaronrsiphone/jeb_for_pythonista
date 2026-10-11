@@ -182,3 +182,33 @@ def build_capability_map() -> dict:
 def build_required_args() -> dict:
     """Tool name -> tuple of required argument names, for every tool that has any."""
     return {spec.name: spec.required for spec in _REGISTRY.values() if spec.required}
+
+
+def resolve_enabled(tools=None, exclude_tools=None):
+    """The set of tool names a session may use, or ``None`` for all of them.
+
+    *tools* is an allowlist (``None`` means every registered tool) and
+    *exclude_tools* a denylist applied after it.  Either may be a single
+    name or an iterable of names.  Every name must be registered: an
+    unknown name raises ``ValueError`` rather than being ignored, because a
+    typo in the denylist (``"run_pyton"``) would otherwise silently leave
+    the tool it meant to remove enabled.  Returns ``None`` when neither
+    argument is given, so an unrestricted session stays exactly as before.
+    """
+    if tools is None and exclude_tools is None:
+        return None
+
+    def names(value):
+        if value is None:
+            return []
+        return [value] if isinstance(value, str) else list(value)
+
+    allow, deny = names(tools), names(exclude_tools)
+    unknown = [n for n in allow + deny if n not in _REGISTRY]
+    if unknown:
+        raise ValueError(
+            "unknown tool name(s): " + ", ".join(repr(n) for n in unknown)
+            + "; registered tools are: " + ", ".join(_REGISTRY)
+        )
+    enabled = set(_REGISTRY) if tools is None else set(allow)
+    return frozenset(enabled - set(deny))

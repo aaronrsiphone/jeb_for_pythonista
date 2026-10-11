@@ -120,6 +120,10 @@ None of the following are optional cleanup targets:
 - `permissions.py` storing its policy outside the workspace on purpose.
 - `checkpoints.py` snapshotting outside the workspace on purpose, so you
   cannot tamper with your own undo history.
+- The session tool limit: `Tools.enabled` filtering both `Tools.schemas`
+  and `Tools.dispatch`, and `registry.resolve_enabled` refusing unknown
+  names. A user who launched with `tools=` or `exclude_tools=` chose what
+  this session may do; a tool you cannot see is not one to restore.
 
 These exist to keep Pythonista alive and the user's machine under their
 control. Do not remove or weaken any of them unless that is the explicit

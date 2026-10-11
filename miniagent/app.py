@@ -1,7 +1,9 @@
 """High-level construction — the console front end's entry point.
 
-``run(project_root)`` is the single public entry point. Importing this
-module does not start a session; all construction happens inside ``run()``.
+``run(project_root, tools=None, exclude_tools=None)`` is the single public
+entry point; the optional arguments limit which tools the session's agent
+can see and call. Importing this module does not start a session; all
+construction happens inside ``run()``.
 Everything ``run()`` used to do inline — keychain access, JEB.md discovery,
 the console loop and its command handlers — now lives in its own module
 (:mod:`.keys`, :mod:`.jebmd`, :mod:`.console`); this file is left with just
@@ -25,20 +27,35 @@ from .provider import Provider
 from .runner import Runner
 from .sessions import SessionLogger
 from .tools import Tools
+from .tools.registry import resolve_enabled
 from .ui import get_renderer
 from .vision import Vision
 from .websearch import WebSearch
 from .workspace import Workspace, WorkspaceError
 
 
-def run(project_root):
-    """Launch the interactive MiniAgent console for *project_root*."""
+def run(project_root, tools=None, exclude_tools=None):
+    """Launch the interactive MiniAgent console for *project_root*.
+
+    *tools* limits the session to the named tools (an allowlist; ``None``
+    means all of them) and *exclude_tools* removes names from that set.
+    Both are fixed for the session: the launcher script passes them, and
+    nothing the agent can edit mid-session changes them.
+    """
     root = Path(project_root).resolve()
     if not root.exists():
         print(f"Project root does not exist: {root}")
         return
     if not root.is_dir():
         print(f"Project root is not a directory: {root}")
+        return
+
+    # Checked before any setup or key prompt, so a typo in the launcher
+    # stops the session immediately instead of after first-run questions.
+    try:
+        enabled = resolve_enabled(tools, exclude_tools)
+    except ValueError as exc:
+        print(f"Cannot start: {exc}")
         return
 
     state_dir = default_state_dir()
@@ -74,7 +91,13 @@ def run(project_root):
     brave = BraveSearch(load_key=load_brave_key, state_dir=state_dir)
     web = WebSearch(config, load_key=lambda name: _load_api_key(config, name),
                     brave=brave)
-    tools = Tools(workspace, permissions, runner, vision=vision, web=web)
+    tool_set = Tools(workspace, permissions, runner, vision=vision, web=web,
+                     enabled=enabled)
+    enabled_names = None
+    if enabled is not None:
+        # Registration order, the order the model sees the schemas in.
+        enabled_names = [schema["function"]["name"] for schema in tool_set.schemas]
+        print("Tools limited to: " + (", ".join(enabled_names) or "(none)"))
     provider = Provider(config, api_key)
     problem = provider.endpoint_problem()
     if problem:
@@ -89,7 +112,8 @@ def run(project_root):
         model=config.model,
     )
     jeb_context = load_jeb_md_context(root)
-    agent = Agent(provider, tools, build_system_prompt(str(root), jeb_context),
+    agent = Agent(provider, tool_set,
+                  build_system_prompt(str(root), jeb_context, enabled_names),
                   recorder=session_logger)
 
     # The front end is a renderer over the agent's event stream, chosen
