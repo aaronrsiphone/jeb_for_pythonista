@@ -404,7 +404,7 @@ def web_search(ctx, prompt: str) -> dict:
         )
     if not web.brave.has_key():
         raise SearchError(
-            "no Brave API key is stored: run ':key set brave <key>' "
+            "no Brave API key is stored: run ':key set brave' "
             "(or set BRAVE_API_KEY)"
         )
 
@@ -460,5 +460,5 @@ def _(ctx, prompt="", **_kw):
         f"{used}/{MONTHLY_LIMIT} used in {month}"
     )
     if not web.brave.has_key():
-        lines.append("Brave API key: missing (:key set brave <key>)")
+        lines.append("Brave API key: missing (:key set brave)")
     return "WEB SEARCH", "\n".join(lines)

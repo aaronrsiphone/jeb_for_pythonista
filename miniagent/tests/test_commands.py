@@ -287,12 +287,58 @@ try:
     check("':config set' updates the live config", ctx.config.model, "m2")
     check("':config set' confirms the update", "model updated and saved" in out, True)
 
-    # :key / :key set VALUE
+    # :key set [provider] always obtains the value from hidden input.
     _, out = capture(lambda: get_spec("key")(ctx, ""))
     check("bare :key reports stored state", "API key stored for provider" in out, True)
-    _, out = capture(lambda: get_spec("key")(ctx, "set s3cr3t"))
-    check("':key set' reports success",
-          ("keychain" in out or "environment" in out), True)
+    hidden = ScriptedInput(["s3cr3t"])
+    _, out = with_secure_input(
+        hidden, lambda: capture(lambda: get_spec("key")(ctx, "set")))
+    check("':key set' stores and activates the hidden key",
+          ctx.provider.api_key, "s3cr3t")
+    check("':key set' uses the private prompt for the current provider",
+          len(hidden.prompts) == 1 and "provA" in hidden.prompts[0], True)
+    check("secret not included in console output", "s3cr3t" not in out, True)
+
+    # A misspelled target or inline secret must not touch the active key.
+    no_prompt = ScriptedInput(["should-not-be-used"])
+    _, out = with_secure_input(
+        no_prompt, lambda: capture(lambda: get_spec("key")(ctx, "set braver")))
+    check("':key set braver' rejects unknown target without prompting",
+          ("Unknown key target" in out, len(no_prompt.prompts),
+           ctx.provider.api_key), (True, 0, "s3cr3t"))
+    _, out = capture(lambda: get_spec("key")(ctx, "set braver secret-value"))
+    check("extra inline argument rejected without echoing secret",
+          ("Usage" in out, "secret-value" in out, ctx.provider.api_key),
+          (True, False, "s3cr3t"))
+    blank = ScriptedInput([""])
+    _, out = with_secure_input(
+        blank, lambda: capture(lambda: get_spec("key")(ctx, "set")))
+    check("blank secret cancels without changing active key",
+          ("nothing changed" in out, ctx.provider.api_key),
+          (True, "s3cr3t"))
+
+    # Other provider key is stored but not activated.
+    _, out = with_secure_input(
+        ScriptedInput(["other-provider-secret"]),
+        lambda: capture(lambda: get_spec("key")(ctx, "set provB")))
+    check("':key set provB' leaves current provider alone",
+          ctx.provider.api_key, "s3cr3t")
+
+    # Avoid modifying the actual Brave key in a developer's Pythonista keychain.
+    from miniagent.console.commands import config_cmds as _config_cmds
+    old_brave_setter = _config_cmds._brave_key_set
+    brave_values = []
+    _config_cmds._brave_key_set = brave_values.append
+    try:
+        prompt = ScriptedInput(["brave-secret"])
+        with_secure_input(prompt, lambda: capture(
+            lambda: get_spec("key")(ctx, "set brave")))
+    finally:
+        _config_cmds._brave_key_set = old_brave_setter
+    check("':key set brave' uses hidden input and Brave-specific storage",
+          (brave_values, "Brave Search" in prompt.prompts[0],
+           ctx.provider.api_key),
+          (["brave-secret"], True, "s3cr3t"))
 
     # :rotate-key — rotation, not just storage.  Provider snapshots api_key
     # at construction, so both `:key set` above and :rotate-key swap the
@@ -326,7 +372,9 @@ try:
           ("inline-key", 0))
 
     # :key set hot-swaps too; :key clear forgets and deactivates.
-    capture(lambda: get_spec("key")(ctx, "set via-key-set"))
+    with_secure_input(
+        ScriptedInput(["via-key-set"]),
+        lambda: capture(lambda: get_spec("key")(ctx, "set")))
     check("':key set' also activates the key in the live session",
           ctx.provider.api_key, "via-key-set")
     _, out = capture(lambda: get_spec("key")(ctx, "clear"))
