@@ -43,6 +43,7 @@ parent = Path(__file__).resolve().parent.parent.parent
 if str(parent) not in sys.path:
     sys.path.insert(0, str(parent))
 
+from miniagent import keys as keys_mod  # noqa: E402
 from miniagent.agent import Agent  # noqa: E402
 from miniagent.checkpoints import Checkpoints  # noqa: E402
 from miniagent.config import Config  # noqa: E402
@@ -63,6 +64,7 @@ from miniagent.provider import Provider  # noqa: E402
 from miniagent.sessions import SessionLogger  # noqa: E402
 from miniagent.ui import get_renderer  # noqa: E402
 from miniagent.workspace import Workspace  # noqa: E402
+from miniagent.tests.fake_keychain import isolate_keychain  # noqa: E402
 
 failures = []
 
@@ -198,6 +200,9 @@ def make_context(root: Path, state_dir: Path):
 
 
 tmp_roots = []  # cleaned in finally
+# :key / :rotate-key below store and clear keys: keep them out of the
+# device keychain.
+fake_keychain, restore_keychain = isolate_keychain(keys_mod)
 
 try:
     root = Path(tempfile.mkdtemp(prefix="ma_cmd_ws_"))
@@ -295,6 +300,9 @@ try:
         hidden, lambda: capture(lambda: get_spec("key")(ctx, "set")))
     check("':key set' stores and activates the hidden key",
           ctx.provider.api_key, "s3cr3t")
+    check("':key set' stored the key in the fake keychain",
+          fake_keychain.get_password(keys_mod._provider_service("provA"),
+                                     keys_mod.KEYCHAIN_ACCOUNT), "s3cr3t")
     check("':key set' uses the private prompt for the current provider",
           len(hidden.prompts) == 1 and "provA" in hidden.prompts[0], True)
     check("secret not included in console output", "s3cr3t" not in out, True)
@@ -553,6 +561,7 @@ try:
     check("the loop still exits cleanly on :quit", "MiniAgent stopped" in out, True)
 
 finally:
+    restore_keychain()
     for root_dir in tmp_roots:
         shutil.rmtree(root_dir, ignore_errors=True)
 

@@ -58,6 +58,7 @@ from miniagent.events import (  # noqa: E402
     ToolProgress,
     ToolStarted,
 )
+from miniagent import keys as keys_mod  # noqa: E402
 from miniagent.keys import BRAVE_ENV, load_brave_key  # noqa: E402
 from miniagent.permissions import WEB_SEARCH, Permissions  # noqa: E402
 from miniagent.provider import ProviderError  # noqa: E402
@@ -72,6 +73,7 @@ from miniagent.ui.console import Console  # noqa: E402
 from miniagent.ui.headless import Headless  # noqa: E402
 from miniagent.websearch import INNER_TIMEOUT, WebSearch  # noqa: E402
 from miniagent.workspace import Workspace  # noqa: E402
+from miniagent.tests.fake_keychain import isolate_keychain  # noqa: E402
 
 failures = []
 DISPATCH_BUG = "Unexpected error in"
@@ -241,6 +243,8 @@ def tmpdir():
 
 
 saved_brave_env = os.environ.pop(BRAVE_ENV, None)
+# :key set brave below stores a key: keep it out of the device keychain.
+fake_keychain, restore_keychain = isolate_keychain(keys_mod)
 
 try:
     # --- validation ---------------------------------------------------------
@@ -588,6 +592,8 @@ try:
             get_command("key")(ctx, "set brave")
         check(":key set brave stores the hidden-prompt value",
               load_brave_key(), "bk-123")
+        check(":key set brave wrote to the fake keychain, not the real one",
+              list(fake_keychain.passwords.values()), ["bk-123"])
         buf = io.StringIO()
         with contextlib.redirect_stdout(buf):
             get_command("key")(ctx, "set brave bk-inline")
@@ -614,6 +620,7 @@ try:
     check("console renders progress indented under the tool", buf.getvalue(), "  ↳ search: adam\n")
 
 finally:
+    restore_keychain()
     os.environ.pop(BRAVE_ENV, None)
     if saved_brave_env is not None:
         os.environ[BRAVE_ENV] = saved_brave_env

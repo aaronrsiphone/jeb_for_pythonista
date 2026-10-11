@@ -221,3 +221,10 @@ interactive-input one.
   design.
 - Avoid native input dialogs (`console.secure_input`, `console.alert`) in
   tests too: they do not hang invisibly, but they still demand a human.
+- Never let a test store or delete a key in the real keychain. On
+  Pythonista, `keys.py` writes to fixed service names (`MiniAgent:brave`,
+  `MiniAgent:provider:NAME`), so a test that runs `:key set brave` or
+  `:rotate-key` would replace the user's real key. Call
+  `isolate_keychain(keys_mod)` from `tests/fake_keychain.py` before
+  anything that stores a key, and call the `restore` it returns in your
+  `finally` (see `test_commands.py` and `test_web_search.py`).

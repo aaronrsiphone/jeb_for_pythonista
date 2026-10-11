@@ -62,12 +62,16 @@ the loop.
 
 ## Construction (`app.py`, `context.py`)
 
-`run(project_root)` is the single public entry point, re-exported from
+`run(project_root, tools=None, exclude_tools=None)` is the single public
+entry point, re-exported from
 `__init__.py`. `app.py` is deliberately small (under 100 lines) — it is only
 the wiring that turns a project root into a running session; everything it
 used to do inline now lives in its own module. `run()`:
 
-1. Resolves and validates `project_root`.
+1. Resolves and validates `project_root`, then turns `tools` /
+   `exclude_tools` into the session's enabled set with
+   `tools.registry.resolve_enabled()` (`None` when neither is given). An
+   unknown tool name stops the launch here, before any setup or key prompt.
 2. Determines the application state directory via `config.default_state_dir()`
    and loads (or first-run-creates) a `Config`.
 3. Loads the API key for the selected provider via `keys._ensure_api_key`
@@ -80,10 +84,11 @@ used to do inline now lives in its own module. `run()`:
    `Runner(workspace)`, `Vision(config, load_key)`,
    `BraveSearch(load_brave_key, state_dir)` and `WebSearch(config, load_key,
    brave)` for web search, `Tools(workspace, permissions, runner,
-   vision=vision, web=web)`, `Provider(config, api_key)`,
+   vision=vision, web=web, enabled=enabled)`, `Provider(config, api_key)`,
    `SessionLogger(root, state_dir, provider, model)`.
 6. Calls `jebmd.load_jeb_md_context(root)` to discover any `JEB.md` files and
-   passes the result to `agent.build_system_prompt()` as `extra_context`.
+   passes the result to `agent.build_system_prompt()` as `extra_context`,
+   along with the enabled tool names when the session is limited.
 7. Builds the `Agent(provider, tools, system_prompt, recorder=session_logger)`
    and picks a renderer (`ui.get_renderer("console")` — the default).
 8. Bundles everything into a `Context` (`context.py`) — config, provider,
@@ -193,9 +198,12 @@ Usage accounting: every response's `usage` dict is summed into
 `TurnEnded.usage`); non-numeric fields are ignored.
 
 The system prompt is built by `build_system_prompt(project_root,
-extra_context="")`, which injects the absolute project root, the
-environment constraints (no shell, no subprocess, workspace confinement,
-never generate termination calls) and coding-behavior guidance. When
+extra_context="", enabled_tools=None)`, which injects the absolute project
+root, the environment constraints (no shell, no subprocess, workspace
+confinement, never generate termination calls) and coding-behavior
+guidance. When `enabled_tools` is given (a limited session), one line lists
+the available tools and says any other tool named in the instructions is
+unavailable. When
 `extra_context` (JEB.md content discovered by `jebmd.py`) is non-empty, it is
 appended after a header explaining the global/local precedence. See
 [`jeb_md.md`](jeb_md.md).
@@ -256,19 +264,25 @@ call goes through:
 1. Parses the JSON arguments (a parse failure short-circuits to an error
    result).
 2. Yields `ToolStarted(name, args)`.
-3. **Required-argument gate**: any argument the registry marks required but
+3. **Session tool limit**: when `Tools.enabled` is set (see
+   `run(tools=..., exclude_tools=...)`) and the name is not in it, returns
+   `"tool '<name>' is not available in this session"` before any other gate.
+   `Tools.schemas` applies the same set, so the model is not offered a
+   disabled tool in the first place; this check covers calls it makes
+   anyway (a resumed history, or instructions that name the tool).
+4. **Required-argument gate**: any argument the registry marks required but
    the call omits (or sends as `null`) is rejected with a clear tool error
    before anything else runs — a call missing `path` gets
    `"read_file requires the argument(s) 'path'"` instead of a bare
    `KeyError` reaching the model as "Unexpected error in ...".
-4. **Permission gate**: if the tool has a capability, asks
+5. **Permission gate**: if the tool has a capability, asks
    `Permissions.decide(capability)`. `None` means "ask" — the preview is
    built only now (not before, so it is never wasted work when policy
    already decides) and a `PermissionNeeded(capability, title, details)` is
    yielded; whatever the driver `send()`s back goes to
    `Permissions.apply_answer()`, which returns `(allowed, comment)`. A denial
    yields `ToolCompleted(..., "denied", ...)` and returns without executing.
-5. Calls the tool's implementation (`spec.func(self, **kwargs)`). A tool
+6. Calls the tool's implementation (`spec.func(self, **kwargs)`). A tool
    written as a generator function (`ToolSpec.delegates`, detected with
    `inspect.isgeneratorfunction`) is delegated to with `yield from`
    instead: its `ToolProgress` events pass straight through to the driver
@@ -276,7 +290,7 @@ call goes through:
    `WorkspaceError`/`RunnerError`/`KnowledgeError`/`VisionError`/`SearchError` and any other
    exception into a `{"ok": false, "error": ...}` result — nothing raises
    into the model.
-6. Yields `ToolCompleted(name, status, comment, payload)` (`status` is one of
+7. Yields `ToolCompleted(name, status, comment, payload)` (`status` is one of
    `ok`/`denied`/`blocked`/`error`) and returns the JSON string (truncated at
    40,000 characters), with any permission-prompt comment attached under
    `"user_comment"`.

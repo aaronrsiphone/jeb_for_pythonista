@@ -47,7 +47,8 @@ class Tools:
     """Holds tool implementations and centralised permission gating."""
 
     def __init__(self, workspace: Workspace, permissions: _perm.Permissions, runner: Runner,
-                 knowledge: Knowledge = None, vision: Vision = None, web=None):
+                 knowledge: Knowledge = None, vision: Vision = None, web=None,
+                 enabled=None):
         self.workspace = workspace
         self.permissions = permissions
         self.runner = runner
@@ -72,10 +73,20 @@ class Tools:
         # and the move into to_delete is recoverable.
         self._session_created = set()
         self._session_cleaned = set()
+        # Names of the tools this session may use (see
+        # registry.resolve_enabled and run()'s tools/exclude_tools), or None
+        # for every registered tool.  It filters both what the model is
+        # offered (schemas) and what dispatch will run, so a call to a
+        # disabled tool — from a resumed session's history, or prompted by
+        # instructions that name it — is refused rather than executed.
+        self.enabled = None if enabled is None else frozenset(enabled)
 
     @property
     def schemas(self):
-        return _registry.build_schemas()
+        schemas = _registry.build_schemas()
+        if self.enabled is None:
+            return schemas
+        return [s for s in schemas if s["function"]["name"] in self.enabled]
 
     # -- dispatch -----------------------------------------------------------
 
@@ -104,6 +115,17 @@ class Tools:
             return _result(outcome)
 
         yield ToolStarted(name, args)
+
+        # Session tool limit.  Checked first, so a disabled tool never
+        # reaches the argument gate, a permission question, or its
+        # implementation.
+        if self.enabled is not None and name not in self.enabled:
+            outcome = {
+                "ok": False,
+                "error": f"tool '{name}' is not available in this session",
+            }
+            yield ToolCompleted(name, "error", "", outcome)
+            return _result(outcome)
 
         # Required-argument gate.  The registry already declares what each
         # tool needs (derived from its function signature), so enforce it

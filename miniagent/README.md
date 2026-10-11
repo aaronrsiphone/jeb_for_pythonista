@@ -55,6 +55,37 @@ if __name__ == "__main__":
 
 This starts an interactive console scoped to that directory.
 
+### Limiting tools
+
+`run()` takes two optional arguments that limit which tools the agent sees
+for the session:
+
+```python
+# Read-only session: only these tools exist for the agent.
+run(project_root=Path(__file__).resolve().parent,
+    tools=["list_files", "read_file", "search_files", "knowledge"])
+
+# Everything except code execution.
+run(project_root=Path(__file__).resolve().parent,
+    exclude_tools=["run_python"])
+```
+
+- `tools` is an allowlist; omitted (`None`) means every tool. `[]` means no
+  tools: the agent can only answer in text.
+- `exclude_tools` removes names after the allowlist is applied.
+- An unknown name in either list stops the launch and prints the valid
+  names, so a typo cannot silently leave a tool enabled. The valid names are
+  the tools table in [`docs/reference.md`](docs/reference.md).
+- A disabled tool is left out of the schemas sent to the model, and a call
+  to it anyway (for example from a resumed session's history) is refused
+  without running. The system prompt lists the tools that are available.
+- The limit is set by the launcher for the whole session. It is not stored
+  in the session log or in `JEB.md`, so the agent cannot change it by
+  editing files during the session.
+
+Limits are separate from permissions. An enabled gated tool still asks
+before it runs.
+
 ### Configure
 
 MiniAgent supports multiple providers in `config.json`. Each provider has
@@ -284,6 +315,9 @@ the provider is used.
 - **Workspace confinement** — every file path is resolved against the
   project root and rejected if it escapes (`../` traversal, absolute paths
   outside root, symlink escapes).
+- **Per-session tool limits** — `run(tools=..., exclude_tools=...)` removes
+  tools from the session entirely: the model is not offered them and
+  dispatch refuses them before the permission gate.
 - **Permission gating** — write, edit, overwrite, run_python, and ask_image
   each require interactive authorization with once / session / always
   granularity. Permission *policy* (`permissions.py`) does no I/O; the

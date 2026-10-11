@@ -31,7 +31,8 @@ class AgentError(Exception):
 DEFAULT_MAX_STEPS = 50
 
 
-def build_system_prompt(project_root: str, extra_context: str = "") -> str:
+def build_system_prompt(project_root: str, extra_context: str = "",
+                        enabled_tools=None) -> str:
     prompt = f"""You are a coding agent running inside Pythonista on iOS.
 Important environment constraints:
 
@@ -82,12 +83,32 @@ When you are finished with the user's request, reply with a normal text
 message (no tool calls).
 """
 
+    if enabled_tools is not None:
+        prompt += "\n" + _enabled_tools_note(enabled_tools)
+
     extra_context = (extra_context or "").strip()
     if extra_context:
         prompt = (
             prompt + "\n\n" + _EXTRA_CONTEXT_HEADER + "\n\n" + extra_context + "\n"
         )
     return prompt
+
+
+def _enabled_tools_note(enabled_tools) -> str:
+    """The system-prompt line for a session whose tools were limited.
+
+    The guidance above names tools (edit_file, run_python, ...) whether or
+    not this session has them, and JEB.md files may too; this line is what
+    tells the model which of them it can actually call.
+    """
+    names = list(enabled_tools)
+    if not names:
+        return "No tools are available in this session; answer in text only.\n"
+    return (
+        "Tools available in this session: " + ", ".join(names) + ". "
+        "Any other tool named in these instructions is unavailable; do not "
+        "call it.\n"
+    )
 
 
 _EXTRA_CONTEXT_HEADER = (
