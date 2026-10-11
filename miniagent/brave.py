@@ -208,7 +208,7 @@ class BraveSearch:
         key = self._key()
         if not key:
             raise SearchError(
-                "no Brave API key is stored: run ':key set brave <key>' "
+                "no Brave API key is stored: run ':key set brave' "
                 "(or set BRAVE_API_KEY)"
             )
         if self.remaining() <= 0:

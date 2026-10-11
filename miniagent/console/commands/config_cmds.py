@@ -97,26 +97,32 @@ def _apply_selection(ctx, previous_name, provider_name, model_name):
 
 @command("key")
 def key_command(ctx, arg):
-    """Show which providers have an API key stored, and the Brave Search key.
+    """Show stored key status, or securely set a provider/Brave key.
 
-    :key set VALUE
-        Store VALUE as the current provider's key and start using it
-        immediately (same as ':rotate-key VALUE').
-    :key set brave VALUE
-        Store the Brave Search API key used by the web_search tool.
+    :key set [PROVIDER]
+        Prompt with hidden input for PROVIDER's key (current provider if
+        omitted), save it, and activate it immediately when applicable.
+    :key set brave
+        Prompt with hidden input for the Brave Search API key.
     :key clear
         Forget the current provider's stored key.
+
+    Inline secret values are deliberately not accepted.
     """
     rest = arg.strip()
-    if rest.startswith("set ") or rest == "set":
-        value = rest[len("set"):].strip()
-        if value == "brave" or value.startswith("brave "):
-            _brave_key_set(value[len("brave"):].strip())
+    if rest == "set" or rest.startswith("set "):
+        parts = rest.split()
+        if len(parts) > 2:
+            print("Usage: :key set [provider] (the key is entered privately)")
             return
-        if not value:
-            print("Usage: :key set <value>")
+        name = parts[1] if len(parts) == 2 else ctx.config.provider
+        if name != "brave" and name not in ctx.config.providers:
+            known = ", ".join(sorted(ctx.config.providers)) or "(none)"
+            print("Unknown key target; nothing changed. "
+                  f"Configured providers: {known}. "
+                  "Brave Search target: brave.")
             return
-        _install_key(ctx, ctx.config.provider, value)
+        _prompt_key_set(ctx, name)
         return
     if rest == "clear":
         name = ctx.config.provider
@@ -127,8 +133,7 @@ def key_command(ctx, arg):
               "is now unauthenticated. Run :rotate-key to enter a new one.")
         return
     if rest:
-        print(f"Unknown :key usage: {arg!r}. Use ':key', ':key set VALUE', "
-              "':key set brave VALUE' or ':key clear'.")
+        print("Usage: :key | :key set [provider] | :key set brave | :key clear")
         return
     current = ctx.config.provider
     stored = bool(_load_api_key(ctx.config))
@@ -148,6 +153,26 @@ def key_command(ctx, arg):
             state = "stored" if _load_api_key(ctx.config, name) else "MISSING"
         print(f"  {name}: {state}")
     print(f"Brave Search API key stored: {bool(load_brave_key())}")
+
+
+def _prompt_key_set(ctx, name):
+    """Validate target before asking for a secret; never parse secret as CLI."""
+    label = "Brave Search" if name == "brave" else f"provider '{name}'"
+    try:
+        entered = _secure_input(
+            f"New API key for {label} (input hidden, blank to cancel): "
+        )
+    except (EOFError, KeyboardInterrupt):
+        print("\nKey update cancelled; nothing changed.")
+        return
+    value = (entered or "").strip()
+    if not value:
+        print("Key update cancelled; nothing changed.")
+        return
+    if name == "brave":
+        _brave_key_set(value)
+    else:
+        _install_key(ctx, name, value)
 
 
 def _install_key(ctx, name, value):
@@ -300,7 +325,7 @@ def provider_command(ctx, arg):
 
 def _brave_key_set(value):
     if not value:
-        print("Usage: :key set brave <value>")
+        print("Usage: :key set brave (the key is entered privately)")
         return
     if store_brave_key(value):
         print("Brave Search API key stored in keychain.")

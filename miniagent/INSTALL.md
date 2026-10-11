@@ -201,7 +201,7 @@ The `web_search` tool needs a Brave Search API key with access to the LLM
 Context endpoint, stored in the keychain with:
 
 ```
-:key set brave your-brave-key
+:key set brave
 ```
 
 Optionally point its search agent at a cheaper model (by default it uses the

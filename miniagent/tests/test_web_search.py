@@ -569,10 +569,38 @@ try:
     ctx = Ctx()
     ctx.config = config
     ctx.provider = SimpleNamespace(api_key="k-main")  # bare :key reads the live key
-    buf = io.StringIO()
-    with contextlib.redirect_stdout(buf):
-        get_command("key")(ctx, "set brave bk-123")
-    check(":key set brave stores the Brave key", load_brave_key(), "bk-123")
+    # :key set brave reads the value from keys._secure_input, which prefers
+    # Pythonista's console.secure_input; stub that (or a stand-in module
+    # off-device) and restore it afterwards.
+    try:
+        import console as _console
+        stand_in = False
+    except ImportError:
+        import types
+        _console = types.ModuleType("console")
+        sys.modules["console"] = _console
+        stand_in = True
+    saved_secure = getattr(_console, "secure_input", None)
+    _console.secure_input = lambda prompt="": "bk-123"
+    try:
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            get_command("key")(ctx, "set brave")
+        check(":key set brave stores the hidden-prompt value",
+              load_brave_key(), "bk-123")
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            get_command("key")(ctx, "set brave bk-inline")
+        check(":key set brave VALUE is rejected and not echoed",
+              ("Usage" in buf.getvalue(), "bk-inline" in buf.getvalue(),
+               load_brave_key()), (True, False, "bk-123"))
+    finally:
+        if stand_in:
+            sys.modules.pop("console", None)
+        elif saved_secure is None:
+            del _console.secure_input
+        else:
+            _console.secure_input = saved_secure
     buf = io.StringIO()
     with contextlib.redirect_stdout(buf):
         get_command("key")(ctx, "")

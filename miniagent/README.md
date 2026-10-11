@@ -150,12 +150,12 @@ preprints, mathematical references and core library documentation, with
 news and content farms removed. That ranking is a Brave Goggle in
 `tools/web_search.py`, whose docstring explains how to edit it.
 
-Store a Brave key with `:key set brave <key>`. Optionally set
-`:config set search_model <provider>/<model-name>` to run the sub-agent on a
-cheaper model; it defaults to the selected chat model. Requests are limited
-on this side to 2 per second and 2,000 per month, counted in
-`brave_usage.json`. The tool is gated: the first use asks for permission and
-shows the request before it leaves the device.
+Store a Brave key with `:key set brave`; its value is entered at a hidden
+prompt. Optionally set `:config set search_model <provider>/<model-name>` to
+run the sub-agent on a cheaper model; it defaults to the selected chat
+model. Requests are limited on this side to 2 per second and 2,000 per
+month, counted in `brave_usage.json`. The tool is gated: the first use asks
+for permission and shows the request before it leaves the device.
 
 ### Give the agent standing instructions
 

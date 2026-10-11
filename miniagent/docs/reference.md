@@ -47,7 +47,7 @@ currently exists*, read straight from the code.
 | `:undo` | — | Restore every file the last turn touched to its state from before that turn (a create_file is undone by deleting the file it created). |
 | `:checkpoints` | — | List the retained undo groups (newest first): turn id, timestamp and the files each one touched. |
 | `:config` | — | Print provider configuration. |
-| `:key` | — | Show which providers have an API key stored, and the Brave Search key. |
+| `:key` | — | Show stored key status, or securely set a provider/Brave key. |
 | `:rotate-key` | `:rekey` | Replace or re-enter an API key without restarting. |
 | `:provider` | `:providers` | List configured providers and their endpoints. |
 | `:model` | `:models` | List every configured model as <provider>/<model-name>, numbered, and select one to use for the current session (selection is not persisted). |
