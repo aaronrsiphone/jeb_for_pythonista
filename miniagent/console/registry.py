@@ -149,9 +149,14 @@ def _wrap(text: str, indent: int, hanging: int, width: int) -> str:
     )
 
 
+def _alphabetical():
+    """Every registered command, sorted by canonical name, for display."""
+    return sorted(all_specs(), key=lambda spec: spec.name)
+
+
 def render_help(width: int = HELP_WIDTH) -> str:
     """The ``:help`` text, generated from every registered command's
-    docstring.  Replaces a hand-maintained ``_print_help`` that had to be
+    docstring, in alphabetical order.  Replaces a hand-maintained ``_print_help`` that had to be
     kept in sync with the dispatch logic by hand.
 
     Every line is reflowed to fit in *width* columns. Docstrings are
@@ -161,7 +166,7 @@ def render_help(width: int = HELP_WIDTH) -> str:
     wrap with a two-space hanging indent.
     """
     entries = []
-    for spec in all_specs():
+    for spec in _alphabetical():
         lines = [_wrap(", ".join(f":{n}" for n in spec.names), 0, 2, width)]
         for block in _help_blocks(spec.help):
             if block is None:
@@ -174,8 +179,8 @@ def render_help(width: int = HELP_WIDTH) -> str:
 
 
 def render_command_list(width: int = HELP_WIDTH) -> str:
-    """A word-wrapped list of every command (and its aliases), for the
-    startup banner.  Generated the same way as :func:`render_help`, so the
+    """A word-wrapped, alphabetical list of every command (and its
+    aliases), for the startup banner.  Generated the same way as :func:`render_help`, so the
     banner cannot list a command that no longer exists or omit one that was
     just added.
 
@@ -185,7 +190,7 @@ def render_command_list(width: int = HELP_WIDTH) -> str:
     """
     indent = "  "
     budget = width - len(indent)
-    tokens = ["/".join(f":{n}" for n in spec.names) for spec in all_specs()]
+    tokens = ["/".join(f":{n}" for n in spec.names) for spec in _alphabetical()]
     lines: list = []
     current: list = []
     current_len = 0

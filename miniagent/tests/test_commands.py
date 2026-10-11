@@ -272,6 +272,25 @@ try:
         check(f"banner mentions :{spec.name}", f":{spec.name}" in banner, True)
     check("banner command lines fit in 49 columns",
           max(len(line) for line in banner.splitlines()) <= 49, True)
+    names = [token.split("/")[0] for token in banner.split()]
+    check("banner lists commands alphabetically", names, sorted(names))
+    help_names = [line.split(",")[0] for line in help_text.splitlines()
+                  if line.startswith(":")]
+    check(":help lists commands alphabetically", help_names, sorted(help_names))
+
+    # --- the banner shows the workspace relative to Pythonista ---------------
+
+    from miniagent.console.loop import _display_root
+    check("local Pythonista root is trimmed",
+          _display_root("/private/var/mobile/Containers/Shared/AppGroup/"
+                        "0B23FE86-C094-4D46-8AEB-09AA09CB183B/Pythonista3/Documents"),
+          "Pythonista3/Documents")
+    check("iCloud Pythonista root is trimmed",
+          _display_root("/private/var/mobile/Library/Mobile Documents/"
+                        "iCloud~com~omz-software~Pythonista3/Documents/proj"),
+          "iCloud/Documents/proj")
+    check("non-Pythonista root outside home is shown in full",
+          _display_root("/opt/project"), "/opt/project")
 
     # --- duplicate registration raises ---------------------------------------
 
