@@ -14,6 +14,8 @@ tools.
 
 from __future__ import annotations
 
+from pathlib import Path
+
 from ..sessions import repair_messages
 from ..ui import drive
 from . import commands  # noqa: F401  (registers every command)
@@ -21,8 +23,8 @@ from .registry import QUIT, get_spec, render_command_list
 
 _BANNER = """
 =================================================
- MiniAgent — coding agent for: {root}
- Endpoint: {endpoint}
+ MiniAgent: {root}
+ Provider: {provider}
  Model: {model}
  Commands:
 {commands}
@@ -30,16 +32,38 @@ _BANNER = """
 """
 
 
+def _display_root(root) -> str:
+    """*root* shortened for the banner.
+
+    On iOS the workspace lives under a long app-group container path
+    (``/private/var/mobile/Containers/Shared/AppGroup/<UUID>/Pythonista3/...``)
+    that wraps across several lines on a phone. Everything before
+    ``Pythonista3`` is dropped; the iCloud container
+    (``iCloud~com~omz-software~Pythonista3``) is shown as ``iCloud``.
+    Elsewhere a path under the home directory is shown as ``~/...``;
+    anything else is shown in full.
+    """
+    path = Path(root)
+    parts = path.parts
+    for i, part in enumerate(parts):
+        if part == "Pythonista3":
+            return "/".join(parts[i:])
+        if part.endswith("~Pythonista3"):
+            return "/".join(("iCloud",) + parts[i + 1:])
+    try:
+        return str(Path("~") / path.relative_to(Path.home()))
+    except (ValueError, RuntimeError):
+        return str(path)
+
+
 def _banner(ctx) -> str:
-    provider = ctx.provider
-    endpoint = provider.base_url.rstrip("/") + "/" + provider.chat_path.lstrip("/")
     config = ctx.config
     model_label = (
         f"{config.provider}/{config.model}" if config.provider else config.model
     )
     return _BANNER.format(
-        root=ctx.root,
-        endpoint=endpoint,
+        root=_display_root(ctx.root),
+        provider=config.provider or "(none)",
         model=model_label,
         commands=render_command_list(),
     )

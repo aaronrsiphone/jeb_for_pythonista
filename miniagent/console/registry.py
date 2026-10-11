@@ -16,6 +16,7 @@ verbatim as its help text.
 from __future__ import annotations
 
 import inspect
+import textwrap
 
 # Canonical name -> CommandSpec, in registration order.
 _REGISTRY: dict = {}
@@ -103,37 +104,104 @@ def all_specs():
     return list(_REGISTRY.values())
 
 
-def render_help() -> str:
+#: Column limit for ``:help`` output: the width of the Pythonista console on
+#: a phone in portrait, where anything longer wraps mid-word.
+HELP_WIDTH = 49
+
+
+def _help_blocks(text: str):
+    """Split a docstring into ``(indent, text, is_usage)`` blocks.
+
+    Consecutive lines at the same indentation are one paragraph and get
+    joined so they can be reflowed. A line starting with ``:`` is a usage
+    line (``:key set [PROVIDER]``) and always stands alone. Blank lines are
+    kept as ``None`` so paragraph spacing survives.
+    """
+    blocks: list = []
+    current = None
+    for raw in text.splitlines():
+        line = raw.strip()
+        if not line:
+            current = None
+            if blocks and blocks[-1] is not None:
+                blocks.append(None)
+            continue
+        indent = len(raw) - len(raw.lstrip())
+        is_usage = line.startswith(":")
+        if current is not None and not is_usage and not current[2] and current[0] == indent:
+            current[1].append(line)
+            continue
+        current = [indent, [line], is_usage]
+        blocks.append(current)
+    while blocks and blocks[-1] is None:
+        blocks.pop()
+    return [b if b is None else (b[0], " ".join(b[1]), b[2]) for b in blocks]
+
+
+def _wrap(text: str, indent: int, hanging: int, width: int) -> str:
+    return textwrap.fill(
+        text,
+        width=width,
+        initial_indent=" " * indent,
+        subsequent_indent=" " * (indent + hanging),
+        break_long_words=False,
+        break_on_hyphens=False,
+    )
+
+
+def _alphabetical():
+    """Every registered command, sorted by canonical name, for display."""
+    return sorted(all_specs(), key=lambda spec: spec.name)
+
+
+def render_help(width: int = HELP_WIDTH) -> str:
     """The ``:help`` text, generated from every registered command's
-    docstring.  Replaces a hand-maintained ``_print_help`` that had to be
+    docstring, in alphabetical order.  Replaces a hand-maintained ``_print_help`` that had to be
     kept in sync with the dispatch logic by hand.
+
+    Every line is reflowed to fit in *width* columns. Docstrings are
+    written at the usual source width, so their paragraphs are re-wrapped
+    here rather than printed verbatim; nested indentation is halved to
+    leave room for text on a narrow screen. Usage lines that do not fit
+    wrap with a two-space hanging indent.
     """
     entries = []
-    for spec in all_specs():
-        heading = ", ".join(f":{n}" for n in spec.names)
-        body = "\n".join("    " + line if line else "" for line in spec.help.splitlines())
-        entries.append(heading + "\n" + body if body else heading)
+    for spec in _alphabetical():
+        lines = [_wrap(", ".join(f":{n}" for n in spec.names), 0, 2, width)]
+        for block in _help_blocks(spec.help):
+            if block is None:
+                lines.append("")
+                continue
+            indent, text, is_usage = block
+            lines.append(_wrap(text, 2 + indent // 2, 2 if is_usage else 0, width))
+        entries.append("\n".join(lines))
     return "Commands\n\n" + "\n\n".join(entries)
 
 
-def render_command_list(width: int = 54) -> str:
-    """A word-wrapped list of every command (and its aliases), for the
-    startup banner.  Generated the same way as :func:`render_help`, so the
+def render_command_list(width: int = HELP_WIDTH) -> str:
+    """A word-wrapped, alphabetical list of every command (and its
+    aliases), for the startup banner.  Generated the same way as :func:`render_help`, so the
     banner cannot list a command that no longer exists or omit one that was
     just added.
+
+    *width* is the full line width, including the two-space indent. A
+    command is never split across lines, so ``:clear-perms`` cannot break
+    at its hyphen the way the console's own wrapping would.
     """
-    tokens = ["/".join(f":{n}" for n in spec.names) for spec in all_specs()]
+    indent = "  "
+    budget = width - len(indent)
+    tokens = ["/".join(f":{n}" for n in spec.names) for spec in _alphabetical()]
     lines: list = []
     current: list = []
     current_len = 0
     for token in tokens:
         added = len(token) + (2 if current else 0)
-        if current and current_len + added > width:
-            lines.append("  " + "  ".join(current))
+        if current and current_len + added > budget:
+            lines.append(indent + "  ".join(current))
             current, current_len = [], 0
             added = len(token)
         current.append(token)
         current_len += added
     if current:
-        lines.append("  " + "  ".join(current))
+        lines.append(indent + "  ".join(current))
     return "\n".join(lines)
