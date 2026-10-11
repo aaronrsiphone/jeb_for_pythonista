@@ -259,6 +259,12 @@ try:
         for alias in spec.aliases:
             check(f":help mentions alias :{alias}", f":{alias}" in help_text, True)
 
+    # --- :help fits the phone-width console ----------------------------------
+
+    widest = max(len(line) for line in help_text.splitlines())
+    check(":help lines fit in 49 columns", widest <= 49, True)
+    check(":help keeps usage lines whole", "  :key set [PROVIDER]" in help_text, True)
+
     # --- the banner list matches the registry --------------------------------
 
     banner = render_command_list()
