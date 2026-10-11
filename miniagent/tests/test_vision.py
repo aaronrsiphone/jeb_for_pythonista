@@ -28,6 +28,7 @@ if str(parent) not in sys.path:
 import miniagent.vision as vision_mod  # noqa: E402
 from miniagent import permissions as perm_mod  # noqa: E402
 from miniagent.config import Config  # noqa: E402
+from miniagent.events import PermissionNeeded  # noqa: E402
 from miniagent.permissions import Permissions  # noqa: E402
 from miniagent.tools import CAPABILITY_MAP, TOOL_SCHEMAS, Tools  # noqa: E402
 from miniagent.vision import (  # noqa: E402
@@ -429,16 +430,31 @@ try:
 
 
     def dispatch_with(prompt_answers, args, vision_engine, root=ws_root):
+        """Drive one ask_image dispatch, answering each PermissionNeeded.
+
+        Tools.dispatch is a generator: it yields PermissionNeeded and
+        expects the answer sent back, parsed from the typed text exactly as
+        a front end parses it.  *prompt* records each permission title.
+        """
         ws_local = Workspace(root)
         prompt = ScriptedPrompt(prompt_answers)
         perms = Permissions(tempfile.mkdtemp(prefix="ma_vision_perm_"),
-                            str(root), prompt=prompt)
+                            str(root))
         tools = Tools(ws_local, perms, None, vision=vision_engine)
-        return json.loads(tools.dispatch({
+        gen = tools.dispatch({
             "id": "t1",
             "function": {"name": "ask_image",
                           "arguments": json.dumps(args)},
-        })), prompt
+        })
+        to_send = None
+        while True:
+            try:
+                event = gen.send(to_send)
+            except StopIteration as stop:
+                return json.loads(stop.value), prompt
+            to_send = None
+            if isinstance(event, PermissionNeeded):
+                to_send = Permissions.parse_answer(prompt(event.title))
 
     fake = FakeVision()
     result, prompt = dispatch_with(
