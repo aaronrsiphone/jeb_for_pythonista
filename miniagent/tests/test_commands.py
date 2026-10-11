@@ -270,6 +270,8 @@ try:
     banner = render_command_list()
     for spec in specs:
         check(f"banner mentions :{spec.name}", f":{spec.name}" in banner, True)
+    check("banner command lines fit in 49 columns",
+          max(len(line) for line in banner.splitlines()) <= 49, True)
 
     # --- duplicate registration raises ---------------------------------------
 

@@ -173,24 +173,30 @@ def render_help(width: int = HELP_WIDTH) -> str:
     return "Commands\n\n" + "\n\n".join(entries)
 
 
-def render_command_list(width: int = 54) -> str:
+def render_command_list(width: int = HELP_WIDTH) -> str:
     """A word-wrapped list of every command (and its aliases), for the
     startup banner.  Generated the same way as :func:`render_help`, so the
     banner cannot list a command that no longer exists or omit one that was
     just added.
+
+    *width* is the full line width, including the two-space indent. A
+    command is never split across lines, so ``:clear-perms`` cannot break
+    at its hyphen the way the console's own wrapping would.
     """
+    indent = "  "
+    budget = width - len(indent)
     tokens = ["/".join(f":{n}" for n in spec.names) for spec in all_specs()]
     lines: list = []
     current: list = []
     current_len = 0
     for token in tokens:
         added = len(token) + (2 if current else 0)
-        if current and current_len + added > width:
-            lines.append("  " + "  ".join(current))
+        if current and current_len + added > budget:
+            lines.append(indent + "  ".join(current))
             current, current_len = [], 0
             added = len(token)
         current.append(token)
         current_len += added
     if current:
-        lines.append("  " + "  ".join(current))
+        lines.append(indent + "  ".join(current))
     return "\n".join(lines)
