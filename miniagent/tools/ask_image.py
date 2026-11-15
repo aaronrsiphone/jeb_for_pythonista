@@ -10,14 +10,22 @@ from ..vision import VisionError
 from .registry import tool
 
 
-@tool(capability=_perm.ASK_IMAGE, params={
-    "question": "What to ask about the image(s).",
-    "images": "Image file paths inside the project workspace, or http(s) image URLs.",
-    "photo": "Photo-library image index; negative counts from the end (-1 = most recent photo).",
-    "clipboard": "Use the image currently on the clipboard.",
-    "system": "Optional system prompt for the vision request.",
-    "max_tokens": "Maximum answer tokens (default 1024).",
-})
+@tool(
+    capability=_perm.ASK_IMAGE,
+    brief='Ask a vision model about images.',
+    brief_params={
+        'images': 'Workspace paths or URLs.',
+        'photo': 'Photo-library index; -1 = latest.',
+    },
+    params={
+        "question": "What to ask about the image(s).",
+        "images": "Image file paths inside the project workspace, or http(s) image URLs.",
+        "photo": "Photo-library image index; negative counts from the end (-1 = most recent photo).",
+        "clipboard": "Use the image currently on the clipboard.",
+        "system": "Optional system prompt for the vision request.",
+        "max_tokens": "Maximum answer tokens (default 1024).",
+    },
+)
 def ask_image(ctx, question: str, images: list = None, photo: int = None,
               clipboard: bool = False, system: str = None, max_tokens: int = None) -> dict:
     """Ask the configured vision model a question about one or more images.

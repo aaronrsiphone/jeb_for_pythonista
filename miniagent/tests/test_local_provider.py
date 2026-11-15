@@ -207,6 +207,20 @@ with tempfile.TemporaryDirectory() as tmp:
     check("messages and tools are passed through",
           (call["messages"], call["tools"]),
           ([{"role": "user", "content": "hi"}], [{"type": "function"}]))
+
+    from miniagent.tools import TOOL_SCHEMAS
+    from miniagent.tools.registry import compact_schemas
+    hf_run.REPLIES[:] = [{"role": "assistant", "content": "x"}] * 2
+    with redirect_stdout(io.StringIO()):
+        provider.chat([], tools=TOOL_SCHEMAS)
+    check("the model gets the brief tool descriptions",
+          hf_run.CALLS[-1]["tools"], compact_schemas(TOOL_SCHEMAS))
+    with redirect_stdout(io.StringIO()):
+        make_provider(settings(url, context=3072,
+                               full_tool_descriptions=True)).chat(
+            [], tools=TOOL_SCHEMAS)
+    check("... or the full ones with full_tool_descriptions",
+          hf_run.CALLS[-1]["tools"], TOOL_SCHEMAS)
     check("sampling options come from extra_body",
           (call["options"]["temperature"], call["options"]["enable_thinking"],
            call["options"]["top_k"]), (0, False, None))

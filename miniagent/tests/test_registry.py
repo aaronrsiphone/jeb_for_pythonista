@@ -192,6 +192,44 @@ check("an undeclared name falls through to Unknown tool",
       dispatch_result(tools, "no_such_tool_xyz").get("error"),
       "Unknown tool: no_such_tool_xyz")
 
+
+# --- brief (compact) schemas ----------------------------------------------
+# The small on-device model gets these instead of the full ones, so they
+# must describe exactly the same call: same names, parameter names, types,
+# enums, required lists and nested shapes.  Only prose may differ.
+
+from miniagent.tools.registry import all_specs, compact_schemas  # noqa: E402
+
+
+def strip_prose(value):
+    if isinstance(value, dict):
+        return {k: strip_prose(v) for k, v in value.items()
+                if k not in ("description", "default")}
+    if isinstance(value, list):
+        return [strip_prose(v) for v in value]
+    return value
+
+
+compact = compact_schemas(TOOL_SCHEMAS)
+check("compact_schemas keeps every tool, in order",
+      [s["function"]["name"] for s in compact], names)
+for full, short in zip(TOOL_SCHEMAS, compact):
+    name = full["function"]["name"]
+    check(f"{name}: brief schema describes the same call",
+          strip_prose(short), strip_prose(full))
+    check(f"{name}: has a brief description",
+          bool(short["function"]["description"]), True)
+    check(f"{name}: brief is not longer than the full text",
+          len(json.dumps(short)) <= len(json.dumps(full)), True)
+    check(f"{name}: brief carries no defaults",
+          [k for k, v in short["function"]["parameters"]["properties"].items()
+           if "default" in v], [])
+check("every tool declares its own brief",
+      [s.name for s in all_specs() if s.compact_schema["function"]["description"]
+       == s.description], [])
+other = {"type": "function", "function": {"name": "not_registered"}}
+check("an unregistered schema passes through", compact_schemas([other]), [other])
+
 print()
 if failures:
     print(f"{len(failures)} FAILURE(S): {failures}")

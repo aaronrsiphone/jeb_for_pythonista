@@ -4,15 +4,26 @@ from .. import permissions as _perm
 from .registry import tool
 
 
-@tool(capability=_perm.EDIT, params={
-    "replace_all": "Replace every occurrence of old_text.",
-    "occurrence": (
-        "Replace only the Nth (1-based) occurrence of old_text. Mutually "
-        "exclusive with replace_all."
+@tool(
+    capability=_perm.EDIT,
+    brief=(
+        'Replace old_text with new_text in a file. old_text must '
+        'match exactly once unless replace_all or occurrence is set.'
     ),
-}, overrides={
-    "replace_all": {"default": False},
-})
+    brief_params={
+        'occurrence': '1-based.',
+    },
+    params={
+        "replace_all": "Replace every occurrence of old_text.",
+        "occurrence": (
+            "Replace only the Nth (1-based) occurrence of old_text. Mutually "
+            "exclusive with replace_all."
+        ),
+    },
+    overrides={
+        "replace_all": {"default": False},
+    },
+)
 def edit_file(ctx, path: str, old_text: str, new_text: str,
               replace_all: bool = False, occurrence: int = None) -> dict:
     """Replace text in an existing file. By default old_text must occur

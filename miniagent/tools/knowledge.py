@@ -16,18 +16,30 @@ def _required_arg(value, key: str, action: str) -> str:
     return value
 
 
-@tool(params={
-    "action": "What to consult.",
-    "path": "Knowledge file (list/read) or directory (search), relative to the knowledge root.",
-    "pattern": "search: text or regex to find.",
-    "include": "search: glob filter on file names.",
-    "query": "docs: symbol to find in the documentation index (substring match).",
-    "page": "docs: doc page to read, e.g. 'ui' or 'py3/ios/appex.html'.",
-}, overrides={
-    "action": {"enum": list(_ACTIONS)},
-    "case_sensitive": {"default": False},
-    "regex": {"default": False},
-})
+@tool(
+    brief=(
+        'Pythonista reference. docs: search (query) or read (page) '
+        'the official docs. list/read/search: files in '
+        'miniagent/knowledge/.'
+    ),
+    brief_params={
+        'query': 'docs: symbol to find.',
+        'page': "docs: page, e.g. 'ui'.",
+    },
+    params={
+        "action": "What to consult.",
+        "path": "Knowledge file (list/read) or directory (search), relative to the knowledge root.",
+        "pattern": "search: text or regex to find.",
+        "include": "search: glob filter on file names.",
+        "query": "docs: symbol to find in the documentation index (substring match).",
+        "page": "docs: doc page to read, e.g. 'ui' or 'py3/ios/appex.html'.",
+    },
+    overrides={
+        "action": {"enum": list(_ACTIONS)},
+        "case_sensitive": {"default": False},
+        "regex": {"default": False},
+    },
+)
 def knowledge(ctx, action: str, path: str = None, start_line: int = None,
               end_line: int = None, pattern: str = None, case_sensitive: bool = False,
               regex: bool = False, include: str = None, max_results: int = None,

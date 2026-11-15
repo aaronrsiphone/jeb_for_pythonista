@@ -15,6 +15,11 @@ signature cannot express on its own:
   a JSON Schema ``default`` the implementation does not itself need — via
   the ``overrides`` mapping, which is shallow-merged onto the type derived
   from the parameter's annotation.
+* **a brief version** — ``brief`` (the description) and ``brief_params``
+  (parameter descriptions) in minimum prose, for a small on-device model
+  whose context the full text would crowd out.  :func:`compact_schemas`
+  builds schemas from them; a parameter not in ``brief_params`` gets no
+  description there, and ``default`` values are left out.
 
 ``TOOL_SCHEMAS`` and ``CAPABILITY_MAP`` (see ``miniagent/tools/__init__.py``)
 are therefore *derived* from this registry rather than hand-maintained: a
@@ -63,7 +68,8 @@ def _base_schema(annotation) -> dict:
 class ToolSpec:
     """One registered tool: its implementation, schema and preview hook."""
 
-    def __init__(self, func, capability=None, params=None, overrides=None):
+    def __init__(self, func, capability=None, params=None, overrides=None,
+                 brief=None, brief_params=None):
         self.func = func
         self.name = func.__name__
         # A tool written as a generator function *delegates*: it runs work of
@@ -113,6 +119,26 @@ class ToolSpec:
             },
         }
 
+        brief_params = brief_params or {}
+        compact_props = {}
+        for name, prop in properties.items():
+            prop = {k: v for k, v in prop.items()
+                    if k not in ("description", "default")}
+            if brief_params.get(name):
+                prop["description"] = brief_params[name]
+            compact_props[name] = prop
+        compact_parameters = {"type": "object", "properties": compact_props}
+        if required:
+            compact_parameters["required"] = required
+        self.compact_schema = {
+            "type": "function",
+            "function": {
+                "name": self.name,
+                "description": _clean_doc(brief) if brief else self.description,
+                "parameters": compact_parameters,
+            },
+        }
+
     def preview(self, func):
         """Register *func* as this tool's permission-prompt preview.
 
@@ -133,7 +159,8 @@ class ToolSpec:
         return self.func(ctx, **kwargs)
 
 
-def tool(capability=None, params=None, overrides=None):
+def tool(capability=None, params=None, overrides=None, brief=None,
+         brief_params=None):
     """Decorator: register a function as a tool and return its ``ToolSpec``.
 
     ``capability`` gates the tool behind that permission (``None`` means the
@@ -141,7 +168,8 @@ def tool(capability=None, params=None, overrides=None):
     text for the generated schema.  ``overrides`` maps parameter name -> a
     dict shallow-merged onto that parameter's derived schema, for shapes an
     annotation alone cannot express (an enum, a nested object array, an
-    explicit ``default``).
+    explicit ``default``).  ``brief`` and ``brief_params`` are the
+    minimum-prose versions used by :func:`compact_schemas`.
 
     Write the function as a generator (``yield`` ``ToolProgress`` events,
     ``return`` the outcome dict) for a long-running tool that should show
@@ -150,7 +178,9 @@ def tool(capability=None, params=None, overrides=None):
     """
 
     def decorate(func):
-        spec = ToolSpec(func, capability=capability, params=params, overrides=overrides)
+        spec = ToolSpec(func, capability=capability, params=params,
+                        overrides=overrides, brief=brief,
+                        brief_params=brief_params)
         if spec.name in _REGISTRY:
             raise ValueError(f"tool '{spec.name}' is already registered")
         _REGISTRY[spec.name] = spec
@@ -172,6 +202,18 @@ def all_specs():
 def build_schemas() -> list:
     """The OpenAI-style tool schema list, in registration order."""
     return [spec.schema for spec in _REGISTRY.values()]
+
+
+def compact_schemas(schemas) -> list:
+    """*schemas* with each registered tool's full schema swapped for its
+    brief one.  Schemas of unregistered tools pass through unchanged."""
+    out = []
+    for schema in schemas or []:
+        name = (schema.get("function") or {}).get("name") \
+            if isinstance(schema, dict) else None
+        spec = _REGISTRY.get(name)
+        out.append(spec.compact_schema if spec is not None else schema)
+    return out
 
 
 def build_capability_map() -> dict:

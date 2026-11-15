@@ -13,11 +13,16 @@ _EDIT_ITEM_SCHEMA = {
 }
 
 
-@tool(capability=_perm.EDIT, params={
-    "edits": "Edits applied in order to the same file.",
-}, overrides={
-    "edits": {"items": _EDIT_ITEM_SCHEMA},
-})
+@tool(
+    capability=_perm.EDIT,
+    brief='Apply several edits to one file, in order; all or nothing.',
+    params={
+        "edits": "Edits applied in order to the same file.",
+    },
+    overrides={
+        "edits": {"items": _EDIT_ITEM_SCHEMA},
+    },
+)
 def multi_edit(ctx, path: str, edits: list) -> dict:
     """Apply a list of {old_text, new_text} edits to one existing file
     atomically: either every edit applies (each old_text must be a unique

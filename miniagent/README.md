@@ -167,14 +167,17 @@ read by MiniAgent instead of being sent anywhere:
 | `weights` | `auto` | `auto` / `lowmem` / `float32`, as in `hf_run.py`. |
 | `temperature`, `top_k`, `top_p`, `repetition_penalty` | the model's own | Sampling. |
 | `progress` | `true` | `false` silences the per-call status lines. |
+| `full_tool_descriptions` | `false` | `true` sends the tools' full descriptions instead of the brief ones. |
 
 Things to know:
 
-- The system prompt plus all twelve tool descriptions are about 2,600
-  tokens, most of a small context. Limiting the tools in the launcher
-  (see [Limiting tools](#limiting-tools)) helps both speed and room:
+- The local model is sent each tool's brief description (`brief=` on its
+  `@tool`, minimum prose) rather than the full one: all twelve tools cost
+  about 1,150 tokens instead of 2,150, so the system prompt plus tools is
+  about 1,600. Limiting the tools in the launcher (see
+  [Limiting tools](#limiting-tools)) saves more:
   `tools=["list_files", "read_file", "search_files", "create_file",
-  "edit_file", "run_python"]` brings it down to about 1,300.
+  "edit_file", "run_python"]` brings it to about 1,000.
 - When a conversation outgrows the context, the oldest tool results are
   replaced by a one-line stub, then the oldest turns are dropped. `:clear`
   starts fresh.

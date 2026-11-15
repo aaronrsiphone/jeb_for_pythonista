@@ -20,7 +20,7 @@ anywhere:
 
 ``context``
     Tokens of conversation the model can hold (default 4096).  The system
-    prompt and the tool descriptions take about 2,600 of them.  LFM3-1.7B
+    prompt and the (brief) tool descriptions take about 1,600 of them.  LFM3-1.7B
     needs roughly 150 KB of memory per token.
 ``max_tokens``
     Longest single reply, thinking included (default 1024).
@@ -32,6 +32,9 @@ anywhere:
     Sampling; the default is what the model's own configuration recommends.
 ``progress``
     ``false`` silences the one status line printed per model call.
+``full_tool_descriptions``
+    ``true`` sends the tools' full descriptions instead of their brief,
+    minimum-prose versions (``brief=`` on each ``@tool``).
 
 All translation between the chat-completions format and the model (chat
 template, tool-call parsing, context trimming, KV-cache reuse) happens in
@@ -199,6 +202,11 @@ class LocalProvider(Provider):
         engine = self._engine()
         progress = bool(self._option("progress", True))
         think = self._option("enable_thinking")
+        if tools and not self._option("full_tool_descriptions", False):
+            # The full descriptions run to about 1,500 tokens of a small
+            # context; the brief ones say the same in a third of that.
+            from .tools.registry import compact_schemas
+            tools = compact_schemas(tools)
         try:
             response = engine.chat(
                 messages,

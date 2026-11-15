@@ -4,7 +4,10 @@ from .. import permissions as _perm
 from .registry import tool
 
 
-@tool(capability=_perm.WRITE)
+@tool(
+    capability=_perm.WRITE,
+    brief='Create a new file.',
+)
 def create_file(ctx, path: str, content: str) -> dict:
     """Create a new UTF-8 text file. Fails if it already exists."""
     outcome = ctx.workspace.create_file(path, content)

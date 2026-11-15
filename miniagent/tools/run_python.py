@@ -6,7 +6,13 @@ from .. import permissions as _perm
 from .registry import tool
 
 
-@tool(capability=_perm.RUN_PYTHON)
+@tool(
+    capability=_perm.RUN_PYTHON,
+    brief=(
+        'Run a .py file in-process; returns its output. input() is '
+        'disabled.'
+    ),
+)
 def run_python(ctx, path: str, args: list = None) -> dict:
     """Execute a .py file in-process inside the project workspace. NOT
     sandboxed. Requires the run_python permission. The script's

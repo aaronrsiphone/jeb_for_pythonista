@@ -376,13 +376,23 @@ def _system_prompt() -> str:
             .replace("{max_searches}", str(MAX_SEARCHES)))
 
 
-@tool(capability=_perm.WEB_SEARCH, params={
-    "prompt": (
-        "The complete research request: the question, the context needed to "
-        "answer it, what is already known or ruled out, and the form the "
-        "answer should take. The search agent sees nothing else."
+@tool(
+    capability=_perm.WEB_SEARCH,
+    brief=(
+        'Research a question on the web; returns an answer with '
+        'sources. Treat it as unverified.'
     ),
-})
+    brief_params={
+        'prompt': 'The whole request; the searcher sees nothing else.',
+    },
+    params={
+        "prompt": (
+            "The complete research request: the question, the context needed to "
+            "answer it, what is already known or ruled out, and the form the "
+            "answer should take. The search agent sees nothing else."
+        ),
+    },
+)
 def web_search(ctx, prompt: str) -> dict:
     """Research a question on the web through a search sub-agent and get back
     a short plain-text answer with source URLs. The sub-agent cannot see this
