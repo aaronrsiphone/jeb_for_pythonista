@@ -23,7 +23,7 @@ from .context import Context
 from .jebmd import load_jeb_md_context
 from .keys import _ensure_api_key, _load_api_key, load_brave_key
 from .permissions import Permissions
-from .provider import Provider
+from .provider import make_provider
 from .runner import Runner
 from .sessions import SessionLogger
 from .tools import Tools
@@ -98,7 +98,7 @@ def run(project_root, tools=None, exclude_tools=None):
         # Registration order, the order the model sees the schemas in.
         enabled_names = [schema["function"]["name"] for schema in tool_set.schemas]
         print("Tools limited to: " + (", ".join(enabled_names) or "(none)"))
-    provider = Provider(config, api_key)
+    provider = make_provider(config, api_key)
     problem = provider.endpoint_problem()
     if problem:
         # Say so up front, naming the files actually in use, rather than

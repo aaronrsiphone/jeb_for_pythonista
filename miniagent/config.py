@@ -64,6 +64,10 @@ PROVIDER_DEFAULTS = {
     "timeout": 120,
 }
 
+# A base_url starting with this is an on-device model run by tiny_gpt
+# (local_provider.py), not an HTTP endpoint.
+LOCAL_SCHEME = "tinygpt://"
+
 # Keys whose values should be JSON-typed (not plain strings).
 _JSON_KEYS = {"extra_headers", "extra_body", "models"}
 
@@ -142,6 +146,8 @@ def _provider_name_from_url(base_url: str) -> str:
     label is dropped when the host has more than two labels.  Falls back to
     ``default`` when nothing usable remains.
     """
+    if str(base_url or "").strip().lower().startswith(LOCAL_SCHEME):
+        return "local"
     host = ""
     try:
         host = (urlparse(base_url or "").hostname or "").lower()
@@ -205,6 +211,9 @@ def _normalize_providers(raw) -> dict:
             merged["extra_headers"] = {}
         if not isinstance(merged.get("extra_body"), dict):
             merged["extra_body"] = {}
+        if str(merged.get("base_url") or "").lower().startswith(LOCAL_SCHEME):
+            # An on-device model: there is no key to ask for.
+            merged["auth_enabled"] = False
         try:
             merged["timeout"] = int(merged.get("timeout") or 120)
         except (TypeError, ValueError):
@@ -349,7 +358,8 @@ class Config:
         base_url = ""
         while not base_url:
             base_url = _safe_input(
-                "API base URL, e.g. https://host.example/v1: "
+                "API base URL, e.g. https://host.example/v1\n"
+                f"(or {LOCAL_SCHEME} for an on-device model): "
             ).strip()
 
         default_name = _provider_name_from_url(base_url)
@@ -370,9 +380,11 @@ class Config:
         if not chat_path:
             chat_path = "/chat/completions"
 
-        use_auth = _safe_input(
-            "Use API-key authentication? [Y/n]: "
-        ).strip().lower()
+        use_auth = "n"
+        if not base_url.lower().startswith(LOCAL_SCHEME):
+            use_auth = _safe_input(
+                "Use API-key authentication? [Y/n]: "
+            ).strip().lower()
 
         settings = dict(PROVIDER_DEFAULTS)
         settings.update({
@@ -382,6 +394,9 @@ class Config:
             "model": models[0],
             "auth_enabled": use_auth not in ("n", "no"),
         })
+        if base_url.lower().startswith(LOCAL_SCHEME):
+            settings["base_url"] = base_url
+            settings["auth_enabled"] = False
         self._data = {
             "providers": {name: settings},
             "provider": name,
@@ -445,12 +460,16 @@ class Config:
         name = str(name or "").strip()
         if not name or any(ch.isspace() or ch == "/" for ch in name):
             raise ValueError("provider name must be one word without '/'")
-        base_url = str(base_url or "").strip().rstrip("/")
-        parts = urlparse(base_url)
-        if parts.scheme not in ("http", "https") or not parts.netloc:
-            raise ValueError(
-                f"base_url must look like https://host.example/v1, got {base_url!r}"
-            )
+        base_url = str(base_url or "").strip()
+        local = base_url.lower().startswith(LOCAL_SCHEME)
+        if not local:
+            base_url = base_url.rstrip("/")
+            parts = urlparse(base_url)
+            if parts.scheme not in ("http", "https") or not parts.netloc:
+                raise ValueError(
+                    "base_url must look like https://host.example/v1 (or "
+                    f"{LOCAL_SCHEME} for an on-device model), got {base_url!r}"
+                )
         providers = self._data["providers"]
         settings = providers.get(name)
         if settings is None:
@@ -459,6 +478,9 @@ class Config:
             settings["extra_headers"] = {}
             settings["extra_body"] = {}
             providers[name] = settings
+        if local:
+            # An on-device model has no key to ask for.
+            settings["auth_enabled"] = False
         settings["base_url"] = base_url
         for model in models:
             model = str(model).strip()

@@ -18,7 +18,7 @@ from ...keys import (
     load_brave_key,
     store_brave_key,
 )
-from ...provider import Provider, ProviderError, list_models
+from ...provider import ProviderError, list_models, make_provider
 from ...ui import get_renderer
 from ..registry import command
 
@@ -64,7 +64,7 @@ def _config_set(ctx, rest):
     elif key not in ("vision_model", "search_model"):
         # Endpoint/auth settings are snapshotted by Provider at
         # construction: rebuild it so the change applies without a restart.
-        fresh = Provider(ctx.config, ctx.provider.api_key)
+        fresh = make_provider(ctx.config, ctx.provider.api_key)
         fresh.effort = ctx.provider.effort
         ctx.provider = fresh
         ctx.agent.provider = fresh
@@ -87,7 +87,7 @@ def _apply_selection(ctx, previous_name, provider_name, model_name):
     ctx.config.select(provider_name, model_name)
     if provider_name != previous_name:
         api_key = _ensure_api_key(ctx.config)
-        new_provider = Provider(ctx.config, api_key)
+        new_provider = make_provider(ctx.config, api_key)
         new_provider.effort = ctx.provider.effort
         ctx.provider = new_provider
         ctx.agent.provider = new_provider
@@ -302,7 +302,7 @@ def provider_command(ctx, arg):
             config.add_provider(parts[1], parts[2], models)
             if parts[1] == config.provider:
                 # Live provider edited (or first one ever): rebuild it.
-                fresh = Provider(config, ctx.provider.api_key
+                fresh = make_provider(config, ctx.provider.api_key
                                  if existed else _ensure_api_key(config))
                 fresh.effort = ctx.provider.effort
                 ctx.provider = fresh

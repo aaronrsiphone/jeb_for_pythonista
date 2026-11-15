@@ -19,7 +19,7 @@ from __future__ import annotations
 from types import SimpleNamespace
 
 from .brave import SearchError
-from .provider import Provider
+from .provider import Provider, make_provider
 from .vision import split_target
 
 # The search agent makes several quick calls; a provider whose configured
@@ -85,4 +85,4 @@ class WebSearch:
                     f"no API key is stored for provider {name!r}, which "
                     "search_model uses"
                 )
-        return Provider(ns, key)
+        return make_provider(ns, key)

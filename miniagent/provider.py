@@ -10,6 +10,8 @@ from urllib.parse import urlparse
 
 import requests
 
+from .config import LOCAL_SCHEME
+
 
 class ProviderError(Exception):
     """Raised when a provider request fails."""
@@ -47,6 +49,11 @@ def list_models(settings: dict, api_key: str = "") -> list:
     the default ``models`` path.
     """
     base = str(settings.get("base_url") or "").strip().rstrip("/")
+    if base.lower().startswith(LOCAL_SCHEME):
+        # An on-device model (local_provider.py): there is no endpoint to
+        # ask, so the answer is whatever the provider was configured with.
+        return sorted(m for m in settings.get("models") or []
+                      if isinstance(m, str) and m)
     parts = urlparse(base)
     if parts.scheme not in ("http", "https") or not parts.netloc:
         raise ProviderError(f"invalid base_url {base!r}")
@@ -82,6 +89,21 @@ def list_models(settings: dict, api_key: str = "") -> list:
         if isinstance(mid, str) and mid and mid not in ids:
             ids.append(mid)
     return sorted(ids)
+
+
+def make_provider(config, api_key: str = ""):
+    """Build the provider *config* selects.
+
+    Everything that needs a provider goes through here rather than calling
+    ``Provider(...)``, so a ``tinygpt://`` base_url gets the in-process
+    :class:`~miniagent.local_provider.LocalProvider` and anything else the
+    HTTP client.
+    """
+    from .local_provider import LocalProvider, is_local
+
+    if is_local(getattr(config, "base_url", "")):
+        return LocalProvider(config, api_key)
+    return Provider(config, api_key)
 
 
 class Provider:
