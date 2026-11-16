@@ -125,6 +125,68 @@ models it offers with `:provider models [NAME]`, and switch models
 mid-session with `:model` (selection is session-only and is not written
 back to `config.json`).
 
+### Running the model on the device
+
+A provider whose base URL starts with `tinygpt://` is not an API at all:
+the model runs inside Pythonista, in the same process as the agent, using
+[tiny_gpt](https://github.com/aaronrsiphone/tiny_gpt)'s NumPy/Accelerate
+inference. No network, no API key. It was built around
+[LiquidAI/LFM3-1.7B](https://huggingface.co/LiquidAI/LFM3-1.7B), a 1.7B
+model trained for tool calling.
+
+1. Put the `tiny_gpt` folder in Pythonista's Documents and download the
+   model once: in its `hf_run.py` set `MODEL_ID = 'LiquidAI/LFM3-1.7B'` and
+   `MODE = 'download'`, then run it (3.5 GB).
+2. In MiniAgent:
+
+   ```
+   :provider add lfm tinygpt:// LiquidAI/LFM3-1.7B
+   :model lfm/LiquidAI/LFM3-1.7B
+   ```
+
+   `tinygpt://` alone looks for the folder in `~/Documents/tiny_gpt`;
+   anywhere else, name it: `tinygpt://~/Documents/code/tiny_gpt`.
+
+The model loads on the first prompt. Each model call then prints one line
+(`· 84 tokens in 59s (4.5/s)`), plus `· reading N tokens…` before a long
+read. The system prompt and tool descriptions are read once and cached, so
+the first call of a session is the slow one.
+
+Options live in the provider's `extra_body`, which for a local model is
+read by MiniAgent instead of being sent anywhere:
+
+```
+:config set extra_body {"context": 4096, "max_tokens": 1024}
+```
+
+| Key | Default | Meaning |
+|---|---|---|
+| `context` | 4096 | Tokens the model can hold. LFM3-1.7B needs about 150 KB of memory per token (600 MB at 4096). |
+| `max_tokens` | 1024 | Longest single reply, thinking included. |
+| `enable_thinking` | model's default (on) | `false` skips the reasoning before each step: faster, less reliable. |
+| `weights` | `auto` | `auto` / `lowmem` / `float32`, as in `hf_run.py`. |
+| `temperature`, `top_k`, `top_p`, `repetition_penalty` | the model's own | Sampling. |
+| `progress` | `true` | `false` silences the per-call status lines. |
+| `full_tool_descriptions` | `false` | `true` sends the tools' full descriptions instead of the brief ones. |
+
+Things to know:
+
+- The local model is sent each tool's brief description (`brief=` on its
+  `@tool`, minimum prose) rather than the full one: all twelve tools cost
+  about 1,150 tokens instead of 2,150, so the system prompt plus tools is
+  about 1,600. Limiting the tools in the launcher (see
+  [Limiting tools](#limiting-tools)) saves more:
+  `tools=["list_files", "read_file", "search_files", "create_file",
+  "edit_file", "run_python"]` brings it to about 1,000.
+- When a conversation outgrows the context, the oldest tool results are
+  replaced by a one-line stub, then the oldest turns are dropped. `:clear`
+  starts fresh.
+- It is a small model. It handles "read this, change that, run it"; it
+  will not match a hosted model on anything long or subtle.
+- `ask_image` and `web_search` use their own `vision_model` /
+  `search_model` settings and are unaffected. The local model cannot see
+  images.
+
 Keys: `:key` shows which providers have a key stored. `:rotate-key`
 prompts (hidden input) for a new key, stores it and starts using it
 immediately, with no restart — use it when a key expires or when the

@@ -59,7 +59,7 @@ currently exists*, read straight from the code.
 | `:workspace` | — | Print the project workspace path. |
 | `:context` | — | Show JEB.md files discovered (global + package + local) and the combined context that was added to the system prompt. |
 
-## Module layout (48 files)
+## Module layout (49 files)
 
 | Module | Purpose |
 |---|---|
@@ -85,6 +85,7 @@ currently exists*, read straight from the code.
 | `jebmd.py` | JEB.md discovery and the global/local merge engine. |
 | `keys.py` | Keychain / API-key loading, storage and legacy migration. |
 | `knowledge.py` | This install's Pythonista reference material, for the knowledge tool. |
+| `local_provider.py` | A provider that runs the model on this device, in this process. |
 | `permissions.py` | Permission policy for MiniAgent tools. |
 | `provider.py` | Provider-neutral, OpenAI-compatible Chat Completions client. |
 | `runner.py` | In-process Python execution for the project workspace. |

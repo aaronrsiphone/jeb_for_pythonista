@@ -3,7 +3,9 @@
 from .registry import tool
 
 
-@tool()
+@tool(
+    brief='Read a text file, with line numbers.',
+)
 def read_file(ctx, path: str, start_line: int = None, end_line: int = None) -> dict:
     """Read a UTF-8 text file with line numbers."""
     return {

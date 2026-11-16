@@ -4,7 +4,10 @@ from .. import permissions as _perm
 from .registry import tool
 
 
-@tool(capability=_perm.OVERWRITE)
+@tool(
+    capability=_perm.OVERWRITE,
+    brief="Replace a file's whole contents.",
+)
 def overwrite_file(ctx, path: str, content: str) -> dict:
     """Replace all contents of an existing file."""
     return ctx.workspace.overwrite_file(path, content)

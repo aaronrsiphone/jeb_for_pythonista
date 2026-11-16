@@ -10,9 +10,12 @@ from ..workspace import WorkspaceError
 from .registry import tool
 
 
-@tool(params={
-    "paths": "Relative paths of files to clean up.",
-})
+@tool(
+    brief='Move files you created this session to the to_delete folder.',
+    params={
+        "paths": "Relative paths of files to clean up.",
+    },
+)
 def clean_up(ctx, paths: list) -> dict:
     """Move scratch files you created with create_file during this session
     into the workspace to_delete folder (a recoverable trash area - nothing

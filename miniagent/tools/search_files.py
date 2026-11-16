@@ -3,19 +3,27 @@
 from .registry import tool
 
 
-@tool(params={
-    "pattern": "Text or regular expression to search for.",
-    "path": "Relative directory to search. Defaults to '.'.",
-    "regex": "Interpret pattern as a regular expression.",
-    "include": "Optional glob filter on file names, e.g. '*.py'.",
-    "max_results": (
-        "Cap on returned matching lines (default 200). The result carries "
-        "a truncated flag when the cap is hit."
-    ),
-}, overrides={
-    "case_sensitive": {"default": False},
-    "regex": {"default": False},
-})
+@tool(
+    brief='Search file contents (literal, case-insensitive by default).',
+    brief_params={
+        'path': "Directory; default '.'.",
+        'include': "Glob, e.g. '*.py'.",
+    },
+    params={
+        "pattern": "Text or regular expression to search for.",
+        "path": "Relative directory to search. Defaults to '.'.",
+        "regex": "Interpret pattern as a regular expression.",
+        "include": "Optional glob filter on file names, e.g. '*.py'.",
+        "max_results": (
+            "Cap on returned matching lines (default 200). The result carries "
+            "a truncated flag when the cap is hit."
+        ),
+    },
+    overrides={
+        "case_sensitive": {"default": False},
+        "regex": {"default": False},
+    },
+)
 def search_files(ctx, pattern: str, path: str = ".", case_sensitive: bool = False,
                   regex: bool = False, include: str = None, max_results: int = None) -> dict:
     """Search the contents of files inside the project workspace for a
